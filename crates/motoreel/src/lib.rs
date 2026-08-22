@@ -6,11 +6,19 @@
 //! `ROADMAP.md`.
 //!
 //! Code lands only through the requirement loop (`CLAUDE.md` §4). R-0001
-//! (`Track` + `Ease`) is implemented; scenes and sinks follow as R-0002
-//! and R-0003.
+//! (`Track` + `Ease`) and R-0002 (scene, camera, projection) are
+//! implemented; the SVG sink follows as R-0003.
 
+mod camera;
 mod ease;
+mod object;
+mod prim;
+mod scene;
 mod track;
 
+pub use camera::{Camera, Projection};
 pub use ease::Ease;
+pub use object::{Object, Shape};
+pub use prim::{Prim2, Pt2, Rgb, Style};
+pub use scene::{ObjectId, Scene};
 pub use track::{Track, TrackError};
