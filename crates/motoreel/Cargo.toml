@@ -1,0 +1,16 @@
+[package]
+name = "motoreel"
+version = "0.0.0"
+description = "Motor-native mathematical animation: Manim-style explanatory rendering driven by keyframes or real GA physics, on garust."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# Path dep during development; garust gains capabilities upstream as needed.
+garust = { path = "../../../garust", features = ["physics"] }
+
+[dev-dependencies]
+# Property-based acceptance tests (R-0001); dev-only, so the normal
+# dependency graph stays garust-only. Same major as the garust workspace.
+proptest = "1"
