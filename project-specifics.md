@@ -72,7 +72,12 @@ The non-obvious domain facts:
   the same currency; the render loop never knows the difference.
 - **Simulation must preserve determinism.** Physics runs offline at a fixed
   timestep before rendering; frames sample the recorded rollout. Same scene,
-  same seed, same frames — bit-for-bit, or the golden-file tests fail.
+  same frames — bit-for-bit **on the same machine**, or the tests fail.
+  Cross-platform bit-exactness is *not* claimed for trig-bearing content:
+  `sin`/`cos` may differ in the last ulp between platforms and libm
+  versions (garust capability audit, 2026-08-20), and a rollout is
+  trig-heavy. Checked-in golden fixtures are therefore trig-free by
+  construction, so CI agrees on any host (R-0003 §2.6, R-0004 §4).
 - **GA quantities are first-class drawables.** Where Manim explains by
   construction, motoreel also explains by *dynamics*: velocity/momentum
   bivectors as oriented plane glyphs, the instantaneous screw axis of a
@@ -96,8 +101,9 @@ Mirrored into `ROADMAP.md`:
   `Scene`/`Object`/`Camera` with projection, `SvgSink` — a 240-frame demo
   that ffmpeg encodes.
 - **M2 — Physics playback:** record a garust-physics `World` rollout into
-  motor tracks (fixed dt, deterministic) and render it — a tumbling body and
-  a pendulum as the first *simulated* explanatory videos.
+  motor tracks (fixed dt, deterministic) and render it — a tumbling body
+  (R-0004, with `Shape::Edges` for wireframe solids) and a pendulum
+  (R-0005, joints) as the first *simulated* explanatory videos.
 - **M3 — GA mechanics visuals:** the study-companion layer — bivector and
   screw-axis glyphs, momentum/velocity overlays, plus derived incidence
   shapes (`JoinLine`, `MeetPoint`) computed live each frame.

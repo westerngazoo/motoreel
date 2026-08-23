@@ -129,6 +129,27 @@ impl SvgSink {
                     style.alpha,
                 );
             }
+            Prim2::Edges { segments, style } => {
+                self.buf.push_str("<path d=\"");
+                for (i, (a, b)) in segments.iter().enumerate() {
+                    debug_assert_finite(a);
+                    debug_assert_finite(b);
+                    if i > 0 {
+                        self.buf.push(' ');
+                    }
+                    let _ = write!(self.buf, "M {},{} L {},{}", a.x, a.y, b.x, b.y);
+                }
+                // No stroke-linejoin: M/L subpairs are disjoint, so joins
+                // never occur and the attribute would be inert.
+                let _ = writeln!(
+                    self.buf,
+                    "\" fill=\"none\" stroke=\"{}\" stroke-width=\"{}\" \
+                     stroke-opacity=\"{}\" stroke-linecap=\"round\"/>",
+                    hex(style),
+                    style.width,
+                    style.alpha,
+                );
+            }
         }
     }
 }

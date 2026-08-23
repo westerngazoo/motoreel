@@ -91,6 +91,14 @@ pub enum Prim2 {
         /// Stroke style, passed through unchanged.
         style: Style,
     },
+    /// A wireframe: disjoint segments sharing one style, drawn as one
+    /// primitive so a solid is culled and styled as a whole.
+    Edges {
+        /// Image-space endpoint pairs, in order.
+        segments: Vec<(Pt2, Pt2)>,
+        /// Stroke style, passed through unchanged.
+        style: Style,
+    },
 }
 
 #[cfg(test)]

@@ -99,8 +99,15 @@ binaries).
 3. **Spec acceptance.** All three specs carry architect- and qa-driven
    decision rows marked "owner acceptance pending".
 
-**Next milestone (M2 — physics playback)** is unblocked and cheap to start:
-the audit confirmed `RigidBody::pose()` already returns a `Motor` and
-`World::step` is deterministic at a caller-supplied fixed dt, and R-0001
-AC8 proved a ≥240-key recorded rollout is API-identical to an authored
-track. Recording a rollout is `keys.push((t, body.rigid.pose()))`.
+**M2 is under way.** R-0004 is `Met` (2026-08-21): `record` steps a
+garust-physics world at fixed dt and returns ordinary motor tracks, the
+shape vocabulary gained `Shape::Edges` for wireframe solids (amending
+R-0002/R-0003 additively — R-0003's golden fixture is byte-unchanged), and
+`cargo run --example tumbling_box` renders a freely tumbling box flipping
+end-over-end via the intermediate axis theorem. 90/90 tests green. Nothing
+in the renderer knows a simulation produced the motion, which was the
+whole claim.
+
+**Next: R-0005 — the pendulum**, adding joints. `World::step` already
+takes the `&[Joint]` slice `record` forwards, so the recorder needs no
+signature change.

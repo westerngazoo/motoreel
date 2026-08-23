@@ -62,6 +62,13 @@ fn prim_parts(prim: &Prim2) -> (u8, Vec<Pt2>, Style) {
         Prim2::Point { at, style } => (0, vec![*at], *style),
         Prim2::Segment { a, b, style } => (1, vec![*a, *b], *style),
         Prim2::Polyline { points, style } => (2, points.clone(), *style),
+        // R-0004 amended the vocabulary; flattened here only to keep this
+        // helper exhaustive. `Edges` behaviour is R-0004's to verify.
+        Prim2::Edges { segments, style } => (
+            3,
+            segments.iter().flat_map(|(a, b)| [*a, *b]).collect(),
+            *style,
+        ),
     }
 }
 
