@@ -78,6 +78,13 @@ fn project_shape(
             let points = ps.iter().map(pt).collect::<Option<Vec<Pt2>>>()?;
             Prim2::Polyline { points, style }
         }
+        Shape::Edges(es) => {
+            let segments = es
+                .iter()
+                .map(|(a, b)| Some((pt(a)?, pt(b)?)))
+                .collect::<Option<Vec<(Pt2, Pt2)>>>()?;
+            Prim2::Edges { segments, style }
+        }
     })
 }
 

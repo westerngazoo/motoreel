@@ -20,6 +20,11 @@ pub enum Shape {
     /// unvalidated — drawing nothing (or a dot) is the sink's honest
     /// rendering of empty geometry.
     Polyline(Vec<pga::Point>),
+    /// A wireframe as disjoint endpoint pairs — one object, one track,
+    /// one style. A solid's edge list generally has no Euler path (every
+    /// vertex of a box has odd degree), so a polyline would visibly
+    /// retrace edges.
+    Edges(Vec<(pga::Point, pga::Point)>),
 }
 
 /// A scene entry: geometry, stroke style, and the motor track posing it.
@@ -49,6 +54,11 @@ impl Object {
     /// A polyline object with default style, holding the identity pose.
     pub fn polyline(points: Vec<pga::Point>) -> Self {
         Object::with_shape(Shape::Polyline(points))
+    }
+
+    /// A wireframe object with default style, holding the identity pose.
+    pub fn edges(segments: Vec<(pga::Point, pga::Point)>) -> Self {
+        Object::with_shape(Shape::Edges(segments))
     }
 
     /// Replace the style (builder).

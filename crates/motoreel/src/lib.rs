@@ -7,12 +7,14 @@
 //!
 //! Code lands only through the requirement loop (`CLAUDE.md` §4). M1 is
 //! complete: R-0001 (`Track` + `Ease`), R-0002 (scene, camera,
-//! projection), and R-0003 (`SvgSink` and the render walk).
+//! projection), and R-0003 (`SvgSink` and the render walk). M2 begins
+//! with R-0004: recording a physics rollout into ordinary motor tracks.
 
 mod camera;
 mod ease;
 mod object;
 mod prim;
+mod record;
 mod scene;
 pub mod sink;
 pub mod svg;
@@ -22,6 +24,7 @@ pub use camera::{Camera, Projection};
 pub use ease::Ease;
 pub use object::{Object, Shape};
 pub use prim::{Prim2, Pt2, Rgb, Style};
+pub use record::{record, RecordError};
 pub use scene::{ObjectId, Scene};
 pub use sink::FrameSink;
 pub use svg::SvgSink;
