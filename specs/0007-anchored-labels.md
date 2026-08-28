@@ -1,6 +1,7 @@
 # SPEC-0007 — Anchored text labels: `Label`, `Prim2::Text`, and an embedded face
 
-- **Status:** Draft — awaiting architect review
+- **Status:** Draft — architect review 2026-08-27 (BLOCK → resolved) applied;
+  awaiting owner acceptance
 - **Realizes:** R-0007
 - **Author:** Claude (engineer session)
 - **Created:** 2026-08-27
@@ -11,7 +12,15 @@
   `to_pixel`, `Tile`)
 - **Module(s):** `crates/motoreel/src/label.rs` (new),
   `crates/motoreel/src/font.rs` (new); additive amendments to `prim.rs`,
-  `object.rs`, `scene.rs`, `svg.rs`, `ppm.rs`, `lib.rs`
+  `object.rs`, `scene.rs`, `sink.rs`, `svg.rs`, `ppm.rs`, `lib.rs`
+- **Implementation gate:** R-0006 must be **`Met`** — not merely accepted —
+  before any code in this spec is written. That is not a paper dependency:
+  §2.9 and §2.13 consume `to_pixel`, `src_over`, `unit`, `Tile` and `Canvas`,
+  and **none of them exists in the tree today**; `ppm.rs` itself does not
+  exist. Until R-0006 lands, `ppm.rs` is a file this spec plans to amend and
+  cannot, and three of §2.13's edits have nothing to edit. Recorded on
+  `ROADMAP.md` as "blocked on R-0006 landing first"; stated here so the
+  ordering is a gate rather than a note.
 
 ## 1. Motivation
 
@@ -49,26 +58,32 @@ table and the escaper is four match arms.
 
 ```
 crates/motoreel/src/
-  label.rs                     — `Label`, `Anchor`, `Corner`, anchor resolution,
-                                 the ASCII rule
+  label.rs                     — `Label`, `Anchor`, `ScreenAnchor`, anchor
+                                 resolution, the ASCII rule
   font.rs                      — the embedded 5×7 face: one `const` table and
                                  one lookup function. No types, no traits.
   prim.rs                      — + `Align`, + `Prim2::Text`
-  object.rs                    — + `ObjectId` (moved from `scene.rs`, §2.0.1)
+  object.rs                    — + `ObjectId` (moved from `scene.rs`, §2.0.1);
+                                 doc-comment renumber R-0007 → R-0010 (§2.14)
   scene.rs                     — + `Scene::labels`, `Scene::view`, `add_label`,
-                                 the label phase of `eval`
-  svg.rs                       — + the `<text>` template and the XML escaper
+                                 the label phase of `eval`; − `ObjectId`;
+                                 doc-comment renumber R-0007 → R-0010 (§2.14)
+  sink.rs                      — + `FrameSink::view` (defaulted) and the
+                                 `Scene::render` view-agreement check (§2.4.3)
+  svg.rs                       — + the `<text>` template and the XML escaper,
+                                 + a retained `view` field and `SvgSink::view`
   ppm.rs                       — + `Canvas::draw_text` (SPEC-0006 §2.12's
-                                 "second entry point beside `draw`")
+                                 "second entry point beside `draw`"),
+                                 + a retained `view` field and `PpmSink::view`
 crates/motoreel/tests/
   r0007_anchored_labels.rs     — every AC (one file per requirement)
   golden/labels_00000.svg      — the SVG text fixture
   golden/labels_00000.ppm      — the PPM text fixture (96×48)
-  golden/font_specimen.ppm     — all 95 glyphs at k = 1 (96×48) — §5 Q4
+  golden/font_specimen.ppm     — all 95 glyphs at k = 1 (96×48); mandatory (§3)
 ```
 
 `lib.rs` gains `mod font; mod label;` and
-`pub use label::{Anchor, Corner, Label};`, `pub use prim::Align`. The
+`pub use label::{Anchor, Label, ScreenAnchor};`, `pub use prim::Align`. The
 `ObjectId` move keeps the public path `motoreel::ObjectId` unchanged; only
 the `pub use` line it appears on moves from `scene::` to `object::`.
 
@@ -79,7 +94,7 @@ introduces no type, no trait, no indirection and no second call path: it is
 ~100 lines of hand-authored `const` bitmap that would otherwise dominate
 `ppm.rs` by line count and bury the ~60 lines of blit logic that actually need
 reading. §2 asks for readable, well-structured modules; extracting the table
-serves that and costs nothing. Recorded as §5 Q1 for the architect, since it
+serves that and costs nothing. Recorded as §5 Q1 and adjudicated **yes**, since it
 sits beside a rule SPEC-0006 stated in the opposite direction.
 
 #### 2.0.1 `ObjectId` moves to `object.rs` — breaking a module cycle
@@ -97,7 +112,7 @@ prim   ← std only                      Pt2, Rgb, Style, Align, Prim2
 object ← prim, track, garust           Shape, Object, ObjectId
 camera ← prim, garust                  Camera, Projection
 font   ← nothing                       the glyph table
-label  ← prim, object, camera, garust  Label, Anchor, Corner
+label  ← prim, object, camera, garust  Label, Anchor, ScreenAnchor
 scene  ← label, object, camera, prim   Scene, eval
 sink   ← prim, scene                   FrameSink, Scene::render
 svg    ← prim, sink                    SvgSink
@@ -108,7 +123,7 @@ The move is invisible outside the crate (`motoreel::ObjectId` is unchanged,
 and `tests/r0002_scene_camera.rs` imports it from the crate root). The
 alternative — defining `Label`/`Anchor` inside `scene.rs` — avoids the move
 but merges "the label vocabulary" into "the evaluation loop", roughly
-doubling `scene.rs` for no gain. §5 Q2.
+doubling `scene.rs` for no gain. §5 Q2, adjudicated **yes**.
 
 ### 2.1 Where labels live in a `Scene` — a separate `labels` field
 
@@ -126,7 +141,7 @@ pub struct Scene {
 
 - `Object` is `{ shape, style, track }` — geometry *posed by a motor track*.
   A label is not posed by a track; it is **anchored**, and one of its three
-  anchor kinds (`Corner`) has no world position at all. A corner-anchored
+  anchor kinds (`Screen`) has no world position at all. A screen-anchored
   `Object` would have to carry a dummy identity `Track` that means nothing —
   a field that lies.
 - If text lived in `Shape`, then `Object::track` and `Anchor::Pose` would be
@@ -179,15 +194,23 @@ pub struct Label {
 pub enum Anchor {
     Point(pga::Point),                          // world point
     Pose { object: ObjectId, at: pga::Point },  // model point on an object
-    Corner(Corner),                             // fixed image position
+    Screen(ScreenAnchor),                       // fixed image position
 }
 
-pub enum Corner { TopLeft, TopRight, BottomLeft, BottomRight }
+/// R-0007 AC4's 3 × 3 grid, in reading order, top row first.
+pub enum ScreenAnchor {
+    TopLeft,    TopCentre,    TopRight,
+    MidLeft,    Centre,       MidRight,
+    BottomLeft, BottomCentre, BottomRight,
+}
 ```
 
-**`size` is the one field R-0007 AC1 does not name, and the design provably
-needs it.** AC1 requires the five listed fields and all five are present;
-`size` is additional. It is not folded into `Style` because:
+**`size` is R-0007 AC1's sixth field, and it is separate from `Style`.** This
+spec's first draft argued for it as an *additional* field AC1 did not name;
+the owner accepted the argument and **amended AC1 on 2026-08-27** to require
+`size` (em height in image units) outright, with the separation from `Style`
+written into the criterion and its rationale into R-0007's own decision log.
+All six required fields are present. It stays out of `Style` because:
 
 - `Style` is the *stroke* vocabulary shared by every primitive, with a
   documented contract "`width` finite and ≥ 0, in image units" that already
@@ -207,11 +230,23 @@ view (`s = 600`), a readable caption. `Style::width` is carried but ignored by
 both sinks for text; it is retained so SPEC-0006's `style_of` stays a total
 function returning one type (§2.13).
 
-`Corner` is **exactly four corners**, matching R-0007 AC4's wording. A
-top-centre title — the single most likely creator request — is not expressible
-today. That is flagged rather than decided: adding `Top`/`Bottom`/`Left`/
-`Right`/`Center` is one new variant and one more match arm, purely additive
-(§5 Q3). Constitution §1.2 puts the call with the owner, not here.
+**The type is `ScreenAnchor`, a 3 × 3 grid — and it is not named `Corner`.**
+This spec's first draft shipped exactly four corners on the strength of
+R-0007 AC4's then-wording, and flagged the cost: *there is no way to centre a
+title*, the single most likely creator request. The owner took the call and
+**amended AC4 on 2026-08-27** to the nine-point grid `TopLeft · TopCentre ·
+TopRight · MidLeft · Centre · MidRight · BottomLeft · BottomCentre ·
+BottomRight`. The requirement now words it as nine, so the four-corner
+position is dead — a spec does not get to be one draft behind the requirement
+it realizes (constitution §1.2).
+
+The rename follows from the content rather than from taste: "corner" is a
+false name for `Centre` and for the three edge midpoints, and a variant
+spelled `Corner::Centre` would be precisely the lying identifier §2 forbids.
+Nothing structural changes. It is still a fieldless `Copy` enum resolved by one
+total function over `Scene::view` (§2.4.3), it still touches no camera and no
+`t`, and the four corners are four of the nine — so every corner argument in
+this spec survives verbatim, with five more cases under it.
 
 Constructors follow the house builder pattern (`Object::point(…).with_style(…)`):
 
@@ -229,6 +264,17 @@ impl Label {
     pub fn is_ascii_renderable(&self) -> bool;
 }
 ```
+
+**`is_ascii_renderable` is public API that no acceptance criterion asks for.**
+It is kept, because §2.5 leans on it as the answer to `'?'`'s one weakness —
+that a substituted character is indistinguishable from an author-typed `?` —
+and without it that argument has no exit. But a spec should not mint public
+surface on its own authority: a public predicate is a compatibility commitment,
+and commitments are the requirement's to make (constitution §1.2). It is
+therefore recorded in §7 and flagged for **promotion into R-0007's decision
+log at owner acceptance**, alongside the `size` field the owner already
+ratified there. Nothing about the design depends on where the row lives; the
+point is that the row exists in the requirement, not only here.
 
 `Align` lives in `prim.rs`, not here, because it is part of the **sink-facing**
 vocabulary — it tells a sink how to place a run relative to a point, which is
@@ -287,16 +333,46 @@ never silently sanitized. A NaN `size` therefore reaches SVG as
 
 `Prim2` keeps `#[derive(Clone, Debug, PartialEq)]`; `String` and `Align`
 support all three. The variant is added last, so `Prim2::Text` is the fifth
-arm of every exhaustive match. Three of those matches exist today and each
-becomes a compile error until amended — which is the designed behaviour
-(SPEC-0006 §2.4: "a label that silently fails to render is the failure mode
-this is chosen to prevent"):
+arm of every exhaustive match, and each such match becomes a compile error
+until amended — which is the designed behaviour (SPEC-0006 §2.4: "a label that
+silently fails to render is the failure mode this is chosen to prevent").
 
-| site | amendment |
-|---|---|
-| `svg.rs` `write_prim` | the new `<text>` template (§2.6) |
-| `ppm.rs` `push_segments`, `style_of`, `Canvas::draw` | §2.13 |
-| `tests/r0002_scene_camera.rs` `prim_parts` | one arm, exactly as R-0004 added for `Edges` — the file already carries that precedent comment verbatim |
+**Four sites, counted against the tree rather than from memory** (the first
+draft named three and got both the count and the tense wrong: it missed
+`r0004`'s helper entirely and listed `ppm.rs`, which does not exist yet):
+
+| # | site | exists today? | amendment |
+|---|---|---|---|
+| 1 | `src/svg.rs` `write_prim` (`:82`) | yes | the new `<text>` template (§2.6) |
+| 2 | `src/ppm.rs` `push_segments`, `style_of`, `Canvas::draw` | **no** — arrives with SPEC-0006 | §2.13 |
+| 3 | `tests/r0002_scene_camera.rs` `prim_parts` (`:60`) | yes | one arm, exactly as R-0004 added for `Edges` — the file already carries that precedent comment verbatim |
+| 4 | `tests/r0004_physics_playback.rs` `prim_parts` (`:226–237`) | yes | the same arm again. R-0004 deliberately grew a **second** copy of the helper rather than sharing one across integration binaries, and its module header at `:67–72` predicts precisely this obligation for the *other* file — so the duplicate is by design and must simply be amended twice |
+
+Row 2 is the concrete reason the implementation gate at the top of this spec
+is a gate: three of those four arms cannot be written until R-0006 is `Met`.
+
+**`every_f64` and `Text.size` — decided, not left open.** `r0004`'s
+`prim_parts` has a companion, `every_f64` (`:242`), which flattens *"every f64
+an emitted primitive carries"* and is fed to the never-non-finite property at
+`:1291`; `r0002` carries the same pair (`:111`, asserted at `:975`). Both
+already push `style.width` and `style.alpha`, which are author passthrough data
+under exactly the rule §2.3 gives `size`. **`every_f64` therefore covers
+`Text.size` too.** The property those tests assert is not "the sinks reject bad
+input" — it is *finite author data in ⇒ finite data out, the pipeline
+manufactures no non-finite value*, and a helper named `every_f64` that skipped
+one of a variant's f64s would be a lie about its own coverage. The cost is one
+constraint on generators, which `style.width` already imposes: a scene fed to
+this property supplies a finite `size`, exactly as it supplies a finite `width`.
+
+Mechanically it is one line, and it does **not** widen `prim_parts`:
+`every_f64` adds `if let Prim2::Text { size, .. } = prim { out.push(*size) }`
+beside its existing `prim_parts` call, so `prim_parts`'s five other call sites
+in `r0002` are untouched. `prim_parts` itself returns `(4, vec![*at], *style)`
+for `Text` — position and style, the two things `prim_bits` needs as
+determinism currency. The string and `size` are deliberately **not** folded
+into `prim_bits`: byte-equality of the text is asserted directly by AC7's own
+clause ("identical strings"), and pushing a `String` through a tuple built for
+bit patterns would buy nothing.
 
 ### 2.4 Anchor resolution in `Scene::eval` (AC2, AC3, AC4)
 
@@ -371,69 +447,187 @@ label anchored at a model point that is *in front* still projects, and is
 emitted. Cull is per primitive, and a label is its own primitive. Documented
 because it will otherwise be read as a bug.
 
-#### 2.4.3 `Anchor::Corner` — AC4, and the `Scene::view` seam
+#### 2.4.3 `Anchor::Screen` — AC4's 3 × 3 grid, and the `Scene::view` seam
 
-A corner is a position in the **view window**, and the view window is a sink
-constructor argument (`SvgSink::with_view`, `PpmSink::with_view`) — which
+A screen anchor is a position in the **view window**, and the view window is a
+sink constructor argument (`SvgSink::with_view`, `PpmSink::with_view`) — which
 `Scene::eval` cannot see. AC4 nevertheless requires a *fixed image-space
 position*. So `Scene` gains the window:
 
 ```rust
 /// The image-space window the frame is expected to show — `(width, height)`,
 /// centred on the origin. Must match the sink's view window; both default to
-/// `(3.2, 1.8)`. Contract: finite and > 0. Only `Anchor::Corner` reads it.
+/// `(3.2, 1.8)`. Contract: finite and > 0. Only `Anchor::Screen` reads it,
+/// and `Scene::render` checks it against the sink's own (§2.4.3).
 pub view: (f64, f64),
 ```
 
+With `hw = view.0 / 2.0` and `hh = view.1 / 2.0`, the nine points are the
+outer product of three x-values with three y-values — image space is y-up, so
+`Top` is `+y`:
+
 ```
-TopLeft     → Pt2 { x: -view.0 / 2.0, y:  view.1 / 2.0 }     # image space is y-up
-TopRight    → Pt2 { x:  view.0 / 2.0, y:  view.1 / 2.0 }
-BottomLeft  → Pt2 { x: -view.0 / 2.0, y: -view.1 / 2.0 }
-BottomRight → Pt2 { x:  view.0 / 2.0, y: -view.1 / 2.0 }
+                  x = -hw        x = 0.0        x = +hw
+   y = +hh        TopLeft        TopCentre      TopRight
+   y =  0.0       MidLeft        Centre         MidRight
+   y = -hh        BottomLeft     BottomCentre   BottomRight
 ```
 
-Halving is exact (exponent decrement) — SPEC-0003 §2.5 already relies on it
-for the viewBox, and the golden's `-1.6 -0.9` is the witness. Corner
-resolution touches no camera and no `t`, so AC4 holds by construction: the
-same `Pt2`, bit-for-bit, for every camera pose, both projections, every time.
+The middle row and middle column are the **literal `0.0`**, not `hh - hh` or
+`hw * 0.0`: a written constant is +0.0 for every `view`, so `Centre` is
+`Pt2 { x: 0.0, y: 0.0 }` exactly and cannot inherit a sign from arithmetic.
+Halving is exact (exponent decrement) — SPEC-0003 §2.5 already relies on it for
+the viewBox, and the golden's `-1.6 -0.9` is the witness. Resolution touches no
+camera and no `t`, so AC4 holds by construction: the same `Pt2`, bit-for-bit,
+for every camera pose, both projections, every time — now over nine cases
+instead of four.
 
-**The honest cost: the view window is now stated twice.** A `Scene::view` that
-disagrees with the sink's places corner labels off-frame or inset. Four things
-contain it:
+**The mid row emits `y="-0"`, and that is fine.** §2.6 writes the SVG `y`
+attribute as `{-at.y}`, the counter-flip's price. For `MidLeft`, `Centre` and
+`MidRight` with no vertical offset, `at.y` is +0.0, so the emitted attribute is
+the negation of positive zero: `y="-0"`. That is legal SVG (a signed zero is a
+number), it is deterministic (negation is exact and value-independent), and it
+is **already precedented in blessed bytes** — R-0003's golden carries
+`points="… -0,0.25 …"` today. It is not cosmetic drift to be tidied away: a
+special case that mapped `-0.0` to `0` would be a value-dependent branch in the
+one place §2.6 promises there is none. `labels_00000.svg` therefore contains a
+`y="-0"` label in its expected bytes (§3), and AC5 keeps a `-0` case (§6).
 
-1. Both sinks and `Scene` default to `(3.2, 1.8)`, so the common case is
-   consistent with zero author effort.
-2. `view` is a plain public field set like `scene.camera` is today — no
-   builder, no second spelling.
-3. A test asserts all three defaults agree, extending the two-sink assertion
-   SPEC-0006 §2.1 already specifies.
-4. The unification is named as debt (§4): a single `View` value owned by the
-   `Scene` and read by the sinks is the right end state, and it is a
-   **breaking change to two landed sink constructors**, so it is its own
-   requirement rather than a quiet edit here.
+**The honest cost: the view window is stated twice — so the disagreement is
+made an error.** A `Scene::view` that disagrees with the sink's silently places
+screen-anchored labels off-frame or inset, and the first draft contained that
+only with defaults, a field, a three-way default-agreement test, and a named
+promotion path. That containment is real but thin: **the only configuration it
+exercises is `(3.2, 1.8)` — the one configuration that cannot desynchronize.**
+The moment an author calls `SvgSink::with_view` and forgets `scene.view`, every
+guard above is silent.
+
+`FrameSink` therefore gains one **defaulted** method, and `Scene::render` gains
+one check:
+
+```rust
+pub trait FrameSink {
+    fn frame(&mut self, index: usize, prims: &[Prim2]) -> io::Result<()>;
+
+    /// The image-space view window this sink renders, if it has one.
+    ///
+    /// Read **only** by [`Scene::render`], to reject a scene whose
+    /// `view` disagrees — screen anchors (§2.4.3) would otherwise land
+    /// off-frame with no diagnostic. It is never an input to
+    /// [`Scene::eval`]: a frame stays a pure function of `(scene, t)`.
+    fn view(&self) -> Option<(f64, f64)> { None }
+}
+```
+
+```
+render(fps, sink):
+    ...the existing fps and duration checks, unchanged...
+    if let Some(v) = sink.view() {
+        if v != self.view { return Err(InvalidInput, "scene.view must match the sink's view window") }
+    }
+    for index in 0..frames { ... }        # unchanged
+```
+
+**Why this survives the objection that killed the earlier hook.** The first
+draft rejected a `FrameSink::view()` because it "makes `eval(t)` and `render`
+disagree about corner placement, so a frame stops being a pure function of
+`(scene, t)`". That objection was aimed at a *different* design — one where the
+sink's window **fed** anchor resolution. This one is a **validator, not an
+input**:
+
+- `Scene::eval` is byte-for-byte unchanged and never calls `sink.view()`. It
+  still reads `self.view` and nothing else, so `eval(t)` remains a pure
+  function of `(scene, t)` — R-0002 AC6's property, and every golden's
+  foundation, is untouched. **No golden moves, in either sink.**
+- The only reachable behaviour change is that a scene which *would have
+  rendered wrong* now returns an error instead of writing files.
+- It is **additive**: the default body means every existing `impl FrameSink`
+  compiles unmodified, including both test doubles in
+  `tests/r0003_svg_sink.rs` (the recording sink and the failing sink), which
+  return `None` and are therefore exempt. This is exactly SPEC-0004's amendment
+  shape on `Prim2` — extend a frozen vocabulary in the one direction that
+  cannot break an existing user — applied to a trait instead of an enum.
+  SPEC-0003 §2.2 froze `FrameSink`'s *obligations*; a method no implementor
+  must write adds none.
+- It lands in the policy already in `sink.rs`: `Scene::render` validates `fps`
+  and `duration` and returns `ErrorKind::InvalidInput` **before any sink call**.
+  This is a third clause on the same list, in the same place, returning the same
+  kind — not a new mechanism.
+- The comparison is `PartialEq` on `(f64, f64)`, so a NaN `Scene::view` never
+  compares equal and is rejected. That is the safe direction, and a NaN view is
+  already a contract violation (finite, > 0).
+
+`SvgSink` and `PpmSink` each override it with `Some(self.view)` — and each
+needs **one new private field to override it with**, which is worth stating
+rather than assuming. `SvgSink` is `{ dir, header, buf }` today: it formats the
+window straight into the `viewBox` at construction and keeps no copy.
+`PpmSink`'s `Canvas` keeps `scale` and `dims`, from which a letterboxed window
+is not recoverable — `s = min(W/vw, H/vh)` discards the slack dimension. Both
+therefore retain the `(f64, f64)` they are already handed by `with_view`, in a
+private `view` field. It is never formatted, never written, and never read by
+anything but `view()`, so no golden byte can move. A sink with no view window
+(a counting or recording sink) keeps the default and opts out by
+construction.
+
+The **cheaper fallback**, rejected: `SvgSink::for_scene(dir, &scene)` /
+`PpmSink::for_scene(...)` constructors that read the window off the scene, so
+the two can never disagree. It needs no trait change at all — but **nothing
+forces a constructor's use**. `with_view` stays public, it is the spelling
+already documented, and the author who reaches for it is exactly the author who
+will forget `scene.view`. A guard that only fires when you opt into it does not
+guard. The validator fires on the path the mistake actually takes.
+
+Still not fixed here, and still §4's debt: the duplication itself. A single
+`View` value owned by the `Scene` and *read* by the sinks is the right end
+state, and it is a breaking change to two landed sink constructors — its own
+requirement, not a quiet edit. What changes is that the interim is now
+**detected** rather than merely defaulted.
 
 Alternatives weighed and rejected:
 
-- **A `FrameSink::view()` trait method** consumed by `Scene::render`. It
-  removes the duplication, and it is even additive (a defaulted method).
-  Rejected because it makes `eval(t)` and `render` disagree about corner
-  placement, so a frame stops being a pure function of `(scene, t)` — the
-  property R-0002 AC6 and *every* golden test in this repo rest on. It also
-  reopens `FrameSink`, which SPEC-0003 §2.2 deliberately froze at the RFC
-  signature.
-- **Normalized corner coordinates** carried through to the sink. `Prim2` would
-  gain a position that is sometimes image space and sometimes not — the
+- **Normalized screen-anchor coordinates** carried through to the sink. `Prim2`
+  would gain a position that is sometimes image space and sometimes not — the
   ambiguity `Prim2`'s enum shape exists to prevent.
 - **Passing the view into `eval`.** Changes a landed public signature with
   acceptance tests against it, for one enum variant.
+- **Making the sink's window authoritative for anchor resolution.** The
+  original, correctly rejected: it is the version that breaks purity.
 
-**Ergonomic trap, documented loudly:** because the anchor is on the baseline,
-`Corner::TopLeft` with a zero offset puts the whole run *above* the frame. The
-doc comment carries the worked title recipe —
-`Label::new("Angular momentum", Anchor::Corner(Corner::TopLeft))
-.with_offset(Pt2 { x: 0.125, y: -0.25 })` — and §5 Q3 records "a safe-area
-inset" as the alternative if the owner would rather the corner mean something
-less literal.
+**Ergonomic trap, documented loudly — and `TopCentre` alone is not a centred
+title.** The anchor sits on the **baseline** (§2.2), so a screen anchor with a
+zero offset puts the whole cap zone *outside* the frame on the top row, and the
+run *starts* at the anchor rather than straddling it. Placing a run at any of
+the nine points is three decisions, not one:
+
+| grid position | `align` | `offset.x` | `offset.y` |
+|---|---|---|---|
+| left column (`TopLeft`, `MidLeft`, `BottomLeft`) | `Align::Left` | **positive** — inset from the edge | — |
+| centre column (`TopCentre`, `Centre`, `BottomCentre`) | **`Align::Center`** | `0.0` | — |
+| right column (`TopRight`, `MidRight`, `BottomRight`) | `Align::Right` | **negative** — inset from the edge | — |
+| top row | — | — | **negative** — at least the cap height (`0.75 · size` in the embedded face), plus the inset you want |
+| mid row | — | — | **negative ≈ `0.375 · size`** to put the cap zone's midline on the anchor, since the anchor is the baseline and not the optical centre |
+| bottom row | — | — | **positive** — at least the descender depth (`0.125 · size`), plus the inset |
+
+So the centred title an explainer actually wants is all three:
+
+```rust
+Label::new("Angular momentum", Anchor::Screen(ScreenAnchor::TopCentre))
+    .with_align(Align::Center)
+    .with_offset(Pt2 { x: 0.0, y: -0.25 })
+```
+
+Drop `.with_align(Align::Center)` and the title hangs to the right of centre;
+drop the offset and it is above the frame. The doc comment on `ScreenAnchor`
+carries this worked example and the table, because the amendment that added
+`TopCentre` was made *for* this recipe and shipping the variant without it
+would hand the owner half a fix. The vertical figures are the embedded face's
+metrics (§2.8); SVG's resolved face has its own cap height and descender, which
+is exactly what §2.10 declines to guarantee — the anchor agrees, the optical
+centring is approximate.
+
+The alternative — a `ScreenAnchor` that resolves to a safe-area inset rather
+than the literal edge — is still declined: it makes the value a function of a
+constant nobody voted on, and the inset is already expressible as `offset`.
 
 ### 2.5 ASCII-only text, made total and visible (AC8)
 
@@ -471,7 +665,7 @@ renders identically in both sinks. Its one weakness — indistinguishable from
 an author-typed `?` — is answered by `Label::is_ascii_renderable()`, a pure
 predicate an author or a future authoring layer (R-0008) can check before
 rendering. The substitute character is a one-line change and one blessed
-golden if the owner prefers another (§5 Q5).
+golden if the owner prefers another (§5 Q5, adjudicated **keep**).
 
 Consequences worth writing down:
 
@@ -520,7 +714,8 @@ circle.
   face: a generic always resolves, and a fixed-advance family is the closest
   an SVG renderer gets to a fixed-advance bitmap face, which minimises (never
   eliminates — §2.10) the divergence. A configurable family is a byte-moving
-  knob to bikeshed; §5 Q6 records it as a later, additive option.
+  knob to bikeshed; §5 Q6 is adjudicated **pinned**, with a configurable
+  family recorded there as a later, additive option.
 - **`xml:space="preserve"`** so leading, trailing and repeated spaces render.
   Without it XML whitespace handling collapses them, while the PPM sink draws
   every space literally — a gratuitous cross-sink divergence for one constant
@@ -542,20 +737,46 @@ non-goal)." The premise is now false. The replacement text:
 > by this total, character-wise map, applied to a string already guaranteed to
 > be printable ASCII (§2.3):
 >
-> | byte | emitted |
+> | `char` | emitted |
 > |---|---|
-> | `&` (0x26) | `&amp;` |
-> | `<` (0x3C) | `&lt;` |
-> | `>` (0x3E) | `&gt;` |
-> | any other `0x20..=0x7E` | verbatim |
+> | `&` (U+0026) | `&amp;` |
+> | `<` (U+003C) | `&lt;` |
+> | `>` (U+003E) | `&gt;` |
+> | any other `char` | verbatim |
+
+**The map is total over `char`, and the table says so.** An earlier draft wrote
+the last row as "any other `0x20..=0x7E`", which contradicted its own code:
+`escape_text`'s fallback is `_ => out.push(c)`, with no arm outside that range
+and none possible — a `match` on `char` must be exhaustive. Writing a narrower
+domain in the normative table than the code implements would leave the one
+interesting case, a violated ASCII contract, formally undefined. It is defined
+below instead.
 
 Four arms, no lookup table, no general XML escaper — because the ASCII
-invariant means no UTF-8 continuation byte, no control character and no
-numeric character reference can ever arise. `"` and `'` are **not** escaped:
-they are legal in element content and this string never enters an attribute.
-`>` is escaped unconditionally even though XML requires it only in `]]>`,
-because a fixed three-character rule is auditable at a glance and cannot
+invariant means that in practice no UTF-8 continuation byte, no control
+character and no numeric character reference arises. `"` and `'` are **not**
+escaped: they are legal in element content and this string never enters an
+attribute. `>` is escaped unconditionally even though XML requires it only in
+`]]>`, because a fixed three-character rule is auditable at a glance and cannot
 construct that sequence.
+
+**If the ASCII contract is violated, the sinks disagree — about the string.**
+`Prim2::Text.text` is printable ASCII by §2.3's invariant, upheld by
+`Scene::eval`. A `Prim2` slice hand-built by a test or a future caller can
+break it, and it is worth being exact about what then happens, because it is
+the **one** case in this spec where the two sinks differ on something §2.10
+lists as *guaranteed*:
+
+| sink | behaviour on a non-ASCII `char` |
+|---|---|
+| `SvgSink` | emitted **verbatim as UTF-8**. The document stays well-formed — the file is declared `encoding="UTF-8"` and the character is legal element content — so the label renders correctly |
+| `PpmSink` | `draw_text` iterates `text.bytes()`, so one multi-byte `char` becomes **one `'?'` per byte**, and `text.len()` is the byte length, so the run's advance and alignment shift with it. In a debug build `font::glyph`'s `debug_assert` tripwire fires first (§2.8) |
+
+So §2.10's "the string, byte-for-byte" row is **conditional on the ASCII
+contract holding** — which is the whole reason §2.5 normalizes once, upstream,
+in `eval`, rather than in each writer. The guarantee is not weakened for any
+label a `Scene` can produce; it is stated conditionally so the condition is
+visible rather than assumed. §2.12 carries the row on the `SvgSink` side.
 
 **How this sits with "no value-dependent branching".** That rule protects the
 *byte shape*: which elements and attributes appear must not depend on the
@@ -566,6 +787,16 @@ statement is therefore: **the element and attribute skeleton is
 value-independent; exactly one text run per label is value-dependent, and its
 transformation is a pure function of the bytes.** Recorded in the decision log
 as a change to SPEC-0003's stated invariant, not as a reinterpretation of it.
+
+**And it is no longer this spec's gloss.** The first draft stated that
+refinement here and left R-0007 AC5 as written, which is a spec quietly
+redefining a requirement clause (§1.2). The owner **amended AC5 on 2026-08-27**
+to carry the refinement in the requirement's own words — skeleton
+value-independent, one text run value-dependent through a total pure escaping
+map, and "text content cannot be emitted any other way". The paragraph above
+now *realizes* AC5 rather than reinterpreting it, and the constraint is
+stronger than the draft's: the escaper is the only route to element content
+that exists.
 
 ### 2.7 Why R-0003's golden fixture stays byte-unchanged (AC5)
 
@@ -582,7 +813,7 @@ argument SPEC-0004 §2.3 made for `Edges`.
    to today's.
 2. **Phase 1 is untouched.** The object loop's expressions, order and
    arithmetic are unchanged; the new `Scene` fields are read only by phase 2
-   (`labels`) and by `Anchor::Corner` (`view`). `Vec::with_capacity` changes
+   (`labels`) and by `Anchor::Screen` (`view`). `Vec::with_capacity` changes
    from `objects.len()` to `objects.len() + labels.len()` — capacity only,
    never bytes (SPEC-0003 §2.5's own hygiene clause).
 3. **The document skeleton is not edited.** The XML declaration, the `<svg>`
@@ -639,8 +870,17 @@ sinks (§2.10).
 **Scaling: integer nearest-neighbour.**
 
 ```
-k = clamp(round(size · s / 8), 1, 4096)     // s = px per image unit (SPEC-0006 §2.3)
+k = clamp(round(size · s / CELL_H), 1, 4096)   // s = px per image unit (SPEC-0006 §2.3)
 ```
+
+The divisor is `font::CELL_H`, the declared cell height, not a literal `8`.
+`font.rs` declares `CELL_W = 6`, `CELL_H = 8` and `BASELINE = 6` because those
+three numbers *are* the face's contract with the rasterizer; `draw_text` uses
+them everywhere the geometry appears (§2.9, §3). Declaring a constant and then
+hard-coding its value beside it is the dead code constitution §2 forbids, and
+worse than dead — it lets the two drift. The one number that stays a literal is
+the row's 5-bit width (`0..5`, `0b10000 >> c`), which is the *storage layout*
+the table's own doc comment defines rather than a metric anything else reads.
 
 `f64::round` — the same function, with the same ties-away-from-zero rule,
 that SPEC-0006 §2.5 already pins for the module, so there is one rounding rule
@@ -682,21 +922,33 @@ All of this happens in **pixel space**, after SPEC-0006 §2.3's mapping — whic
 is reused verbatim, not re-derived:
 
 ```
-(px, py) = to_pixel(at, scale, size)          // SPEC-0006 §2.3, unchanged
+(px, py) = to_pixel(at, scale, dims)           // SPEC-0006 §2.3, unchanged
 n        = text.len()                          // == char count; ASCII
-w        = 6 · k · n                           // advance width, px (integer)
+w        = CELL_W · k · n                      // advance width, px (integer)
 pen_x    = match align { Left => px, Center => px - (w/2) as f64,
                          Right => px - w as f64 }
 x0       = pen_x.floor() as i64                // integer pen origin
-y0       = py.floor() as i64 - 6·k             // cell top row
+y0       = py.floor() as i64 - BASELINE · k    // cell top row
 ```
 
-- **Advance width, not ink width.** `6·k·n` includes the last glyph's side
-  bearing, which is what SVG's `text-anchor` centres on too; and it is total
-  for `n = 0`, where an ink-width formula (`k(6n − 1)`) would go negative.
-- **`w/2` is always an integer** because the advance is 6 — an even number —
-  so centring introduces no half-pixel of its own. Only `px` itself can be
+- **Advance width, not ink width.** `CELL_W · k · n` includes the last glyph's
+  side bearing, which is what SVG's `text-anchor` centres on too; and it is
+  total for `n = 0`, where an ink-width formula (`k(CELL_W·n − 1)`) would go
+  negative.
+- **`w/2` is always an integer** because `CELL_W` is 6 — an even number — so
+  centring introduces no half-pixel of its own. Only `px` itself can be
   fractional, and `floor` resolves it.
+- **`dims`, not `size`.** SPEC-0006 calls the raster dimensions `size`
+  throughout `ppm.rs` — `Canvas::size`, `to_pixel(_, _, size)`,
+  `Tile::around(_, _, size)`. `Prim2::Text` brings a *third* meaning of the
+  word into the same module, and `draw_text` holds two of them in scope at
+  once: `size: f64` (the em height) and `self.size: (u32, u32)` (the frame's
+  pixels). Two live bindings one field-access apart, spelled identically and
+  meaning unrelated things, is the ambiguity §2 forbids — and the compiler
+  would not catch a swap between `to_pixel`'s third argument and the em height
+  in a call that took both. The raster dimensions are renamed **`dims`**
+  (§2.13 edit 7); the em height keeps `size`, because that is what R-0007 AC1
+  and the SVG attribute call it.
 - **`floor`, matching SPEC-0006's tile arithmetic**, so `ppm.rs` has one
   pixel-quantization idiom. The resulting placement error is at most 1 px,
   which lands inside the ±1 px tolerance SPEC-0006 §2.8 already documents and
@@ -753,7 +1005,7 @@ because conflating the three is what makes such statements rot.
 | Presence / absence of a label | Decided once, in `Scene::eval` (§2.4). Both sinks see the same slice |
 | The cull decision | Same — inherited from R-0002 §2.5, not re-implemented |
 | The anchor position `at`, bit-for-bit | Same `Pt2`; SPEC-0006 §2.8's mapping is exact, not approximate |
-| The string, byte-for-byte after ASCII normalization | Normalized upstream (§2.5), so a substitution cannot differ between sinks |
+| The string, byte-for-byte after ASCII normalization — **conditional on §2.3's ASCII invariant** | Normalized upstream (§2.5), so a substitution cannot differ between sinks. The invariant is upheld by `Scene::eval`, so it holds for every label a `Scene` can produce; a hand-built `Prim2` that breaks it is the one case where the sinks disagree about the *string*, itemized in §2.6 |
 | The alignment mode, nominal `size`, colour, alpha | Carried verbatim |
 | Draw order: every object, then every label, insertion order within each | Decided in `eval` (§2.1); neither sink sorts |
 | Byte-identical re-renders *within* a sink | §2.11 |
@@ -787,7 +1039,7 @@ links and breaks none.
 
 1. **Anchor resolution is a pure function of `(scene, t)`.** Every anchor kind
    reads only scene data: `Point` and `Pose` go through the same
-   compose/transform/project chain as geometry; `Corner` reads `Scene::view`
+   compose/transform/project chain as geometry; `Screen` reads `Scene::view`
    and nothing else. No clock, environment, randomness, thread, or map
    iteration is involved, and `labels` is a `Vec` iterated in insertion order.
 2. **The ASCII normalizer is a total character-wise map**, so `Prim2::Text`'s
@@ -812,13 +1064,16 @@ links and breaks none.
 | `eval` | `Anchor::Pose` anchor point behind the camera | Label absent |
 | `eval` | `Anchor::Pose` object culled, anchor point in front | Label **present** — cull is per primitive (§2.4.2) |
 | `eval` | `Anchor::Pose { object }` id out of range | Label absent. Reachable (`Scene`'s fields are public; ids are not scene-scoped), so `Option`, never `expect` |
-| `eval` | `Anchor::Corner` | Never culled; depends on neither camera nor `t` |
-| `eval` | `Scene::view` non-finite or ≤ 0 (contract violation) | Corner position non-finite → those labels culled by the finite guard. Point- and pose-anchored labels unaffected |
+| `eval` | `Anchor::Screen` | Never culled; depends on neither camera nor `t`. All nine variants |
+| `eval` | `Scene::view` non-finite or ≤ 0 (contract violation) | The six edge-touching anchors resolve non-finite → culled by the finite guard. **`Centre` survives**: its coordinates are the literal `0.0`, not arithmetic on `view` (§2.4.3). Point- and pose-anchored labels unaffected. Normally unreachable — `Scene::render` rejects it earlier against a sink that reports a view |
 | `eval` | `label.offset` non-finite | Resolved position non-finite → label absent, keeping §2.3's coordinate invariant unconditional |
 | `eval` | Non-ASCII or control character in `text` | Each such `char` → `'?'`; character count preserved; no panic, no drop (§2.5) |
 | `eval` | `text` empty | A `Prim2::Text` with an empty string **is** emitted — presence is a fact about the anchor, not the content. SVG writes `<text …></text>`; PPM paints nothing |
 | `eval` | `label.size` non-finite or ≤ 0 | Carried verbatim, exactly as a bad `Style::width` is (SPEC-0002 §2.2) |
+| `Scene::render` | `sink.view()` is `Some(v)` and `v != scene.view` | `ErrorKind::InvalidInput`, **before frame 0** — no file written. Joins the existing `fps` / `duration` checks in the same place (§2.4.3). NaN never compares equal, so a NaN `scene.view` is rejected too |
+| `Scene::render` | `sink.view()` is `None` (a sink with no view window) | No check; renders. The defaulted method is how a recording or counting sink opts out |
 | `SvgSink` | `&`, `<`, `>` in text | Escaped per §2.6. `"` / `'` need no escape (element content) |
+| `SvgSink` | non-ASCII `char` in text (§2.3 invariant violated by a hand-built `Prim2`) | Emitted **verbatim as UTF-8**; the document stays well-formed. `PpmSink` instead draws one `'?'` per byte, so this is the single case where the sinks disagree about the string (§2.6, §2.10) |
 | `SvgSink` | non-finite or ≤ 0 `size` | Written verbatim: `font-size="NaN"`. Deterministic bytes; the `stroke-width` precedent |
 | `PpmSink` | non-finite or ≤ 0 `size` | Paints nothing (§2.9) |
 | `PpmSink` | `alpha` NaN or 0 | Paints nothing, via SPEC-0006's `unit` |
@@ -839,18 +1094,33 @@ the only fallible surface in the pipeline remains `Track` construction.
 SPEC-0006 §2.12 predicted this requirement's shape; this section is the reply,
 so the architect can check both sides of the seam at once.
 
+**None of it exists yet, and that is a scheduling constraint, not a caveat.**
+`crates/motoreel/src/ppm.rs` is not in the tree: `to_pixel`, `src_over`,
+`unit`, `Tile` and `Canvas` are all SPEC-0006 designs awaiting implementation.
+**R-0006 must be `Met` before implementation of this spec begins** — every
+"reused unchanged" item below is reused from code that has to be written first,
+and the seven edits are edits to a file that has to exist first. Reversing the
+order would mean re-deriving SPEC-0006's mapping here, which is exactly what
+this section exists to avoid.
+
 **Reused unchanged — not re-derived, not copied:**
 
-1. `to_pixel(p: Pt2, scale: f64, size: (u32, u32)) -> Px` — the normative
+1. `to_pixel(p: Pt2, scale: f64, dims: (u32, u32)) -> Px` — the normative
    world→pixel mapping (§2.3), including `s = min(W/vw, H/vh)`, the `xMidYMid
-   meet` derivation, and pixel centres at `+0.5`. Text anchors map through it
-   with no additional concept, exactly as §2.12 forecast ("the screen-corner
+   meet` derivation, and pixel centres at `+0.5`. Its arithmetic is untouched;
+   only the third parameter's *name* changes (edit 7). Text anchors map through
+   it with no additional concept, exactly as §2.12 forecast ("the screen-corner
    anchor is a `Pt2` like any other").
 2. `src_over(dst: &mut [u8], src: Rgb, a: f64)` — one `f64::round`,
    ties away from zero, 8-bit sRGB, `u8` framebuffer. Glyph pixels composite
    at coverage `1.0`; the compositor is untouched.
 3. `unit(x: f64) -> f64` — the total `[0, 1]` clamp with NaN → 0, applied to
-   `style.alpha`.
+   `style.alpha`. **Reused by reference, not restated:** SPEC-0006's own
+   architect revision is correcting this function's spelling for a clippy
+   defect, and this spec pins only its *semantics* (total, NaN → 0, `[0, 1]`).
+   Whatever body that revision lands is the body the text path calls — there is
+   no second copy here to drift out of step, and `cargo clippy --workspace
+   --all-targets -- -D warnings` is a merge gate either way.
 4. `Canvas`'s pixel buffer, background fill, and per-frame reset. Text writes
    through the same `pixels` slice in the same row-major order.
 5. `PpmSink` itself — header, `File::create` + two `write_all`s, filename
@@ -864,15 +1134,17 @@ so the architect can check both sides of the seam at once.
 8. `f64::round` as the module's single rounding rule; `mul_add` stays
    forbidden; no transcendental enters the text path either.
 
-**What SPEC-0006's code must change — the complete list, five edits:**
+**What SPEC-0006's code must change — the complete list, seven edits:**
 
 | # | site | change |
 |---|---|---|
 | 1 | `Canvas::draw` | Route `Prim2::Text` to `draw_text` **before** the `radius > 0.0` / `alpha` guards, which are stroke guards and would wrongly reject a text label whose `Style::width` is 0. The match lists all five variants by name — still **no `_` arm** |
 | 2 | `push_segments` | One explicit `Prim2::Text { .. } => {}` arm with the reason ("text has no centre-lines; `draw` routes it before here"). An empty arm, not a wildcard, so a sixth variant is still a compile error |
 | 3 | `style_of` | One `Text` arm returning its `style` |
-| 4 | `Tile` | One additive constructor, `Tile::clip(x0: i64, y0: i64, x1: i64, y1: i64, size: (u32, u32)) -> Option<Tile>`, so the glyph run's integer destination rectangle is clipped by the same code that clips stroke tiles. `Tile::around` is not refactored to use it — that would be churn in landed logic for symmetry alone |
-| 5 | new | `Canvas::draw_text(&mut self, at: Pt2, text: &str, size: f64, align: Align, style: Style)` and a private `blit_glyph` — the "second entry point on `Canvas` beside `draw`" §2.12 anticipated |
+| 4 | `Tile` | One additive constructor, `Tile::clip(x0: i64, y0: i64, x1: i64, y1: i64, dims: (u32, u32)) -> Option<Tile>`, so the glyph run's integer destination rectangle is clipped by the same code that clips stroke tiles. `Tile::around` is not refactored to use it — that would be churn in landed logic for symmetry alone |
+| 5 | new | `Canvas::draw_text(&mut self, at: Pt2, text: &str, size: f64, align: Align, style: Style)` and a private `fill_block` — the "second entry point on `Canvas` beside `draw`" §2.12 anticipated |
+| 6 | `Canvas::draw` → new `Canvas::draw_stroke` | **An extract-method on landed code, missed by the first draft's "complete list".** Edit 1 turns `draw` into a two-arm router, so SPEC-0006's entire `draw` body — style lookup, the `radius`/`alpha` guards, `push_segments`, the tile, the coverage pass, the composite pass — moves verbatim into `fn draw_stroke(&mut self, prim: &Prim2)`, which `draw` calls for the four stroke variants (§3 shows the result). Pure extraction: not one expression is edited, reordered, or re-derived, so SPEC-0006's stroke golden cannot move. It is listed because "the complete list" has to be complete — a reviewer diffing `ppm.rs` will see the largest hunk in the file and it must be accounted for |
+| 7 | `Canvas::size` → `Canvas::dims`; `to_pixel` and `Tile::*`'s `size` parameter → `dims` | The `size` collision §2.9 describes: `Prim2::Text` brings an em height into a module where `size` already means raster dimensions, and `draw_text` holds both. A private-field and private-parameter rename — no public API, no behaviour, no golden. If SPEC-0006's own architect revision adopts `dims` first, this edit disappears; it is recorded here so it happens in exactly one of the two places |
 
 **Not needed, and worth saying so:** the coverage tile (`Canvas::coverage`),
 `distance_to_segment`, `coverage`, and the `max` union are **not** used by the
@@ -896,10 +1168,22 @@ extraction is not taken. It remains available and additive.
 3. **The coordinate invariant** (SPEC-0002 §2.2) stays unconditional, which is
    why the offset add is followed by a finite guard rather than trusted.
 4. **`ObjectId`** was reserved in SPEC-0002 §2.6 as "the seam R-0007's derived
-   shapes will reference; inert until then". Two notes for the orchestrator,
-   not edited here: that forward reference means the *old* R-0007
-   (`JoinLine`/`MeetPoint`), renumbered to **R-0010** on 2026-08-27; and the
-   id's first real consumer turns out to be labels, not derived shapes.
+   shapes will reference; inert until then". That forward reference means the
+   *old* R-0007 (`JoinLine`/`MeetPoint`), renumbered to **R-0010** on
+   2026-08-27 — and the id's first real consumer turns out to be labels, not
+   derived shapes. **Two landed doc comments still carry the old number and are
+   fixed in this spec's diff**, rather than left for someone to trip over:
+
+   | file:line | today | becomes |
+   |---|---|---|
+   | `src/object.rs:11` | "derived incidence shapes (`JoinLine`, `MeetPoint`) arrive with M3 (R-0007)" | "…arrive with M3 (**R-0010**)" |
+   | `src/scene.rs:10` | "the seam R-0007's derived shapes will reference; **inert until then**" | "the seam **R-0010**'s derived shapes will reference; first consumed by `Anchor::Pose` (R-0007)" |
+
+   Neither is cosmetic. `object.rs:11` points a reader at a requirement that is
+   now about text, and `scene.rs:10` will be *doubly* wrong the moment this spec
+   lands — wrong number and wrong tense, on a type that is no longer inert.
+   `scene.rs` is being edited anyway for the `ObjectId` move (§2.0.1), so the
+   line is in the diff regardless; `object.rs` is being edited to receive it.
 5. **`Scene` gains public fields.** No `Scene { … }` struct literal exists
    anywhere in the tree (checked: every construction goes through
    `Scene::new`), so the change is source-compatible today. For an external
@@ -912,7 +1196,15 @@ extraction is not taken. It remains available and additive.
    one new variant, one pinned template, an explicit "the existing golden is
    byte-unchanged" clause, and one added arm in
    `tests/r0002_scene_camera.rs`'s `prim_parts` helper — which already carries
-   R-0004's comment saying exactly that.
+   R-0004's comment saying exactly that. (It needs the same arm in
+   `tests/r0004_physics_playback.rs` too; §2.3 counts the sites.)
+8. **`sink.rs` is amended, and SPEC-0003 §2.2's freeze survives it.** `FrameSink`
+   gains a **defaulted** `view()` and `Scene::render` gains a third
+   `InvalidInput` clause beside the `fps` and `duration` ones it already has
+   (§2.4.3). The freeze SPEC-0003 declared is on what an implementor must
+   *write*: `fn frame` is untouched, no existing `impl FrameSink` in the tree or
+   in a test changes by one character, and a sink with no view window opts out
+   by saying nothing. `Scene::eval` does not learn the method exists.
 
 ## 3. Code outline
 
@@ -979,12 +1271,30 @@ pub enum Anchor {
     Pose { object: ObjectId, at: pga::Point },
     /// A fixed image-space position derived from `Scene::view`; independent
     /// of camera and of time.
-    Corner(Corner),
+    Screen(ScreenAnchor),
 }
 
-/// Image-space corners, `y` up (`Top` is `+y`).
+/// One of nine fixed image-space positions — R-0007 AC4's 3 × 3 grid.
+/// Image space is `y`-up, so `Top` is `+y`.
+///
+/// **The anchor is on the text baseline, and the run starts at it.** Placing a
+/// run is three decisions, not one: the grid point, the [`Align`], and an
+/// `offset`. In particular `TopCentre` alone is *not* a centred title — it
+/// pins the baseline to the top edge and hangs the run to the right. The
+/// title an explainer wants is all three (§2.4.3):
+///
+/// ```
+/// # use motoreel::{Align, Anchor, Label, Pt2, ScreenAnchor};
+/// Label::new("Angular momentum", Anchor::Screen(ScreenAnchor::TopCentre))
+///     .with_align(Align::Center)
+///     .with_offset(Pt2 { x: 0.0, y: -0.25 });
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Corner { TopLeft, TopRight, BottomLeft, BottomRight }
+pub enum ScreenAnchor {
+    TopLeft,    TopCentre,    TopRight,
+    MidLeft,    Centre,       MidRight,
+    BottomLeft, BottomCentre, BottomRight,
+}
 
 impl Label {
     /// A label with the default size (0.08 image units), `Align::Left` and
@@ -1007,7 +1317,7 @@ impl Anchor {
     /// whole label (SPEC-0002 §2.5's rule, applied to a label's one vertex).
     ///
     /// `view` is `camera.pose.inverse()`, composed once per `eval`; `window`
-    /// is `Scene::view` and is read only by `Corner`.
+    /// is `Scene::view` and is read only by `Screen`.
     pub(crate) fn resolve(
         &self,
         objects: &[Object],
@@ -1028,19 +1338,26 @@ impl Anchor {
                 let to_view = view.compose(&obj.track.eval(t));
                 projection.project(&at.transform(&to_view))
             }
-            Anchor::Corner(c) => Some(corner_point(*c, window)),
+            Anchor::Screen(a) => Some(screen_point(*a, window)),
         }
     }
 }
 
-/// Image space is y-up, so `Top` is `+y`. Halving is exact.
-fn corner_point(corner: Corner, window: (f64, f64)) -> Pt2 {
+/// Image space is y-up, so `Top` is `+y`. Halving is exact, and the middle
+/// row and column are the literal `0.0` — never arithmetic on `window`, so
+/// `Centre` is `(+0.0, +0.0)` for every view (§2.4.3).
+fn screen_point(anchor: ScreenAnchor, window: (f64, f64)) -> Pt2 {
     let (hw, hh) = (window.0 / 2.0, window.1 / 2.0);
-    match corner {
-        Corner::TopLeft     => Pt2 { x: -hw, y:  hh },
-        Corner::TopRight    => Pt2 { x:  hw, y:  hh },
-        Corner::BottomLeft  => Pt2 { x: -hw, y: -hh },
-        Corner::BottomRight => Pt2 { x:  hw, y: -hh },
+    match anchor {
+        ScreenAnchor::TopLeft      => Pt2 { x: -hw, y:  hh },
+        ScreenAnchor::TopCentre    => Pt2 { x: 0.0, y:  hh },
+        ScreenAnchor::TopRight     => Pt2 { x:  hw, y:  hh },
+        ScreenAnchor::MidLeft      => Pt2 { x: -hw, y: 0.0 },
+        ScreenAnchor::Centre       => Pt2 { x: 0.0, y: 0.0 },
+        ScreenAnchor::MidRight     => Pt2 { x:  hw, y: 0.0 },
+        ScreenAnchor::BottomLeft   => Pt2 { x: -hw, y: -hh },
+        ScreenAnchor::BottomCentre => Pt2 { x: 0.0, y: -hh },
+        ScreenAnchor::BottomRight  => Pt2 { x:  hw, y: -hh },
     }
 }
 
@@ -1103,6 +1420,46 @@ impl Scene {
 ```
 
 ```rust
+// sink.rs — one defaulted trait method and one validator (§2.4.3)
+
+pub trait FrameSink {
+    fn frame(&mut self, index: usize, prims: &[Prim2]) -> io::Result<()>;
+
+    /// The image-space view window this sink renders, if it has one.
+    ///
+    /// Read **only** by [`Scene::render`], to reject a scene whose `view`
+    /// disagrees — screen-anchored labels would otherwise land off-frame
+    /// with no diagnostic. Never an input to [`Scene::eval`]: a frame stays
+    /// a pure function of `(scene, t)`, so no golden moves. Defaulted, so a
+    /// sink with no view window (a recorder, a counter) opts out by saying
+    /// nothing.
+    fn view(&self) -> Option<(f64, f64)> {
+        None
+    }
+}
+
+impl Scene {
+    pub fn render<S: FrameSink + ?Sized>(&self, fps: f64, sink: &mut S) -> io::Result<()> {
+        // … the existing `fps` and `duration` checks, unchanged …
+
+        // Validate before side effects — SPEC-0003 §2.4's rule, third clause.
+        // `!=` on (f64, f64): a NaN `self.view` never compares equal, so a
+        // view violating its own contract is rejected here too.
+        if let Some(v) = sink.view() {
+            if v != self.view {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "scene.view must match the sink's view window",
+                ));
+            }
+        }
+
+        // … the frame walk, unchanged …
+    }
+}
+```
+
+```rust
 // svg.rs — the pinned template and the escaper
 
 Prim2::Text { at, text, size, align, style } => {
@@ -1134,9 +1491,14 @@ fn anchor_word(align: Align) -> &'static str {
 /// XML element-content escaping — the only escaping motoreel performs.
 ///
 /// `text` is printable ASCII by `Prim2::Text`'s invariant, so three
-/// metacharacters exhaust the cases: no UTF-8 continuation byte, no control
-/// character, no numeric character reference can arise. `"` and `'` are legal
-/// in element content and this string never enters an attribute value.
+/// metacharacters exhaust the interesting cases: no control character and no
+/// numeric character reference can arise. `"` and `'` are legal in element
+/// content and this string never enters an attribute value.
+///
+/// The map is **total over `char`**, not over `0x20..=0x7E`: the fallback arm
+/// passes anything else through, so a hand-built `Prim2` that violates the
+/// invariant still yields well-formed UTF-8 rather than undefined behaviour —
+/// the one case where the two sinks disagree about the string (§2.6, §2.10).
 fn escape_text(text: &str, out: &mut String) {
     for c in text.chars() {
         match c {
@@ -1163,8 +1525,18 @@ impl Canvas {
             Prim2::Point { .. }
             | Prim2::Segment { .. }
             | Prim2::Polyline { .. }
-            | Prim2::Edges { .. } => self.draw_stroke(prim), // SPEC-0006 §2.5
+            | Prim2::Edges { .. } => self.draw_stroke(prim),
         }
+    }
+
+    /// SPEC-0006 §2.5's rasterizer, verbatim: style lookup, the
+    /// `radius`/`alpha` guards, `push_segments`, the tile, the coverage pass,
+    /// the composite pass. This is a **pure extract-method** from `draw` —
+    /// edit 6 of §2.13 — so that `draw` can become a two-arm router. Not one
+    /// expression is edited or reordered, which is why SPEC-0006's stroke
+    /// golden cannot move.
+    fn draw_stroke(&mut self, prim: &Prim2) {
+        // … SPEC-0006 §3's `draw` body, moved unchanged …
     }
 
     /// Blit one ASCII run from the embedded face (§2.8, §2.9). Integer
@@ -1176,23 +1548,29 @@ impl Canvas {
         if !(size.is_finite() && size > 0.0) || alpha == 0.0 || text.is_empty() {
             return;
         }
-        let k = (size * self.scale / 8.0).round().clamp(1.0, 4096.0) as i64;
-        let (px, py) = to_pixel(at, self.scale, self.size); // SPEC-0006 §2.3
+        // The face's own metrics, never their values inline (§2.8).
+        let k = (size * self.scale / font::CELL_H as f64)
+            .round()
+            .clamp(1.0, 4096.0) as i64;
+        let (px, py) = to_pixel(at, self.scale, self.dims); // SPEC-0006 §2.3
 
-        let advance = 6 * k;
+        let advance = font::CELL_W * k;
         let width = advance * text.len() as i64;
         let pen = match align {
             Align::Left => px,
-            Align::Center => px - (width / 2) as f64, // `6k·n` is even: exact
+            // `CELL_W · k · n` is even, so the halving is exact.
+            Align::Center => px - (width / 2) as f64,
             Align::Right => px - width as f64,
         };
         let x0 = pen.floor() as i64;
-        let y0 = py.floor() as i64 - 6 * k; // baseline is 6 font-pixels down
+        let y0 = py.floor() as i64 - font::BASELINE * k;
 
         for (i, byte) in text.bytes().enumerate() {
             let bits = font::glyph(byte);
             let gx = x0 + advance * i as i64;
             for (r, row) in bits.iter().enumerate() {
+                // `0..5` and `0b10000` are the row's storage layout, defined
+                // by the table's own doc comment — not a metric (§2.8).
                 for c in 0..5 {
                     if row & (0b10000 >> c) == 0 {
                         continue;
@@ -1212,12 +1590,12 @@ impl Canvas {
     /// One `k × k` block, clipped to the canvas before any per-pixel work so
     /// an off-frame run costs nothing.
     fn fill_block(&mut self, x: i64, y: i64, k: i64, src: Rgb, alpha: f64) {
-        let Some(tile) = Tile::clip(x, y, x + k, y + k, self.size) else {
+        let Some(tile) = Tile::clip(x, y, x + k, y + k, self.dims) else {
             return;
         };
         for py in tile.y0..tile.y1 {
             for px in tile.x0..tile.x1 {
-                let i = (py as usize * self.size.0 as usize + px as usize) * 3;
+                let i = (py as usize * self.dims.0 as usize + px as usize) * 3;
                 src_over(&mut self.pixels[i..i + 3], src, alpha); // SPEC-0006
             }
         }
@@ -1265,9 +1643,11 @@ pub(crate) fn glyph(byte: u8) -> &'static [u8; 7] {
 **The SVG text golden, illustrative** — exact bytes are frozen at
 implementation from the pinned grammar and reviewed by eye, then blessed
 (§6 AC5), as SPEC-0003 §3 does. A trig-free scene: `Scene::new(1.0)` (default
-orthographic camera at `translator(0, 0, 5)`, default view), one white point
-object at world `(0.5, −0.25, 0)` holding `translator(0.5, −0.25, 0)`, and
-three labels — one per anchor kind, all three alignments, one escaping case:
+orthographic camera at `translator(0, 0, 5)`, default view `(3.2, 1.8)`, so
+screen anchors sit at `±1.6` / `±0.9`), one white point object at world
+`(0.5, −0.25, 0)` holding `translator(0.5, −0.25, 0)`, and four labels — one
+per anchor kind, all three alignments, one escaping case, and the `-0` witness
+§2.4.3 requires:
 
 ```
 <?xml version="1.0" encoding="UTF-8"?>
@@ -1277,13 +1657,31 @@ three labels — one per anchor kind, all three alignments, one escaping case:
 <text transform="scale(1 -1)" x="-1" y="-0.5" font-family="monospace" font-size="0.08" text-anchor="start" xml:space="preserve" fill="#e0e0e0" fill-opacity="1">v = 2 m/s</text>
 <text transform="scale(1 -1)" x="-1.475" y="-0.65" font-family="monospace" font-size="0.12" text-anchor="end" xml:space="preserve" fill="#ffffff" fill-opacity="1">L &lt; 90 &amp; rising</text>
 <text transform="scale(1 -1)" x="0.5" y="0.25" font-family="monospace" font-size="0.08" text-anchor="middle" xml:space="preserve" fill="#ff4d00" fill-opacity="1">box</text>
+<text transform="scale(1 -1)" x="0" y="-0" font-family="monospace" font-size="0.08" text-anchor="middle" xml:space="preserve" fill="#e0e0e0" fill-opacity="1">centre</text>
 </g>
 </svg>
 ```
 
-Note the order: the object first, then the labels (§2.1), and the third
-label's `x`/`y` are bit-identical to the circle's `cx`/`cy` — the same
-`Pose` anchor / `Shape::Point` agreement AC3 asserts, visible in the bytes.
+Note the order: the object first, then the labels (§2.1). Three things in those
+bytes are load-bearing rather than decorative:
+
+- **The third label agrees with the circle, in the way §2.6's rule actually
+  produces.** Its `x` equals the circle's `cx` **bit-for-bit**, and its `y` is
+  the **exact negation** of the circle's `cy` — `0.25` against `cy="-0.25"` —
+  because §2.6 emits `y` as `-p.y` for the counter-flip. Both come from the
+  same `Pose` anchor / `Shape::Point` agreement AC3 asserts; the negation is
+  the template's, not a discrepancy. (An earlier draft claimed both attributes
+  were bit-identical to the circle's, which the block immediately below it
+  contradicted.)
+- **The fourth label is the `-0` witness.** It is
+  `Anchor::Screen(ScreenAnchor::Centre)` with a zero offset, so `at` is
+  `(+0.0, +0.0)`: `x` prints `0` and `y`, negated by the template, prints
+  `-0`. Legal, deterministic, and already precedented — R-0003's golden carries
+  `-0,0.25` in its polyline today (§2.4.3).
+- **It is also the ergonomic trap, frozen in bytes.** That label has
+  `Align::Center` but no vertical offset, so its baseline is on the origin and
+  the run reads *above* centre. Anyone blessing this fixture sees the thing
+  §2.4.3 warns about.
 
 **The PPM text golden**: 96 × 48 px over view `(3.0, 1.5)`, so `s = 32`
 exactly, on black. Length `13 + 96·48·3 = 13 837` bytes. The non-default view
@@ -1292,9 +1690,71 @@ baseline row lands on a **dyadic** image coordinate, so `size = 0.5 → k = 2`
 and `size = 0.25 → k = 1` are exact rather than rounding accidents, and every
 expected pixel index is hand-derivable. (Agreement of the *default* views is
 already covered by SPEC-0006 AC2(b); this fixture's job is to pin glyph
-bytes.) Contents: one `k = 2` run mid-frame exercising interiors, one `k = 1`
-corner run, one run with an alpha of 0.5 over the first, and one substituted
-character.
+bytes.)
+
+**Contents, exactly.** "One `k = 2` run, one `k = 1` corner run, one at alpha
+0.5" is a sketch, not a fixture — nobody can bless bytes from it. The scene is
+pinned here so the expected pixels are derivable before a line of code exists.
+`Scene::new(1.0)` with `scene.view = (3.0, 1.5)`; **no objects**; three labels,
+appended in this order. `to_pixel` at this scale is
+`(px, py) = (48 + 32·x, 24 − 32·y)`, and screen anchors sit at `±1.5` / `±0.75`:
+
+| # | anchor | `offset` | `align` | author text | emitted | `size` | `k` | `style` |
+|---|---|---|---|---|---|---|---|---|
+| 1 | `Screen(Centre)` | `(0.0, -0.25)` | `Center` | `"MOTO"` | `"MOTO"` | `0.5` | 2 | `#ffffff`, `width: 0.0`, `alpha: 1.0` |
+| 2 | `Screen(BottomLeft)` | `(0.0625, 0.0625)` | `Left` | `"g\u{00E9}"` | `"g?"` | `0.25` | 1 | `#ff4d00`, `width: 0.0`, `alpha: 1.0` |
+| 3 | `Screen(Centre)` | `(0.375, -0.25)` | `Center` | `"MOTO"` | `"MOTO"` | `0.5` | 2 | `#00b4d8`, `width: 0.0`, `alpha: 0.5` |
+
+Derived placement, all integral, all inside the frame:
+
+| # | `(px, py)` | `w` | `x0` | `y0` | ink |
+|---|---|---|---|---|---|
+| 1 | `(48, 32)` | 48 | 24 | 20 | cols 24..72, rows 20..34, baseline row 32 |
+| 2 | `(2, 46)` | 12 | 2 | 40 | cols 2..14, rows 40..47, baseline row 46 |
+| 3 | `(60, 32)` | 48 | 36 | 20 | cols 36..84, rows 20..34, baseline row 32 |
+
+What each one is for:
+
+- **1 — the `k = 2` interior run.** `M` and `O` have enclosed counters, so
+  nearest-neighbour replication is checked on interior pixels and not only on
+  edges. `width: 0.0` is deliberate: it proves §2.9's claim that text ignores
+  the stroke path's `radius > 0.0` guard and renders anyway.
+- **2 — the `k = 1` corner run, the baseline convention, and the
+  substitution.** `g` puts ink on row 46 (the descender, *at* the baseline)
+  and rows 40..45 above it, which is AC6(d)'s convention in the fixture rather
+  than only in a unit test. The `?` is a **substituted** character: the author
+  string is `"g\u{00E9}"`, so the golden also proves §2.5 fired upstream. The
+  `0.0625` offsets are `2/32` — dyadic, and enough to clear the frame edge so
+  nothing is clipped.
+- **3 — compositing at alpha 0.5, over ink and over background.** It is
+  displaced from run 1 by exactly `0.375` image units = 12 px = **one cell at
+  `k = 2`**, so its four cells land cell-aligned on run 1's cells 1–3 and on
+  black for the fourth. Both composites are hand-checkable from SPEC-0006's
+  `src_over`, and all three channels land on an exact `.5` tie, so the fixture
+  pins the *ties-away-from-zero* rounding rule as a side effect:
+  over black → `(0, 90, 108)`; over run 1's white → `(128, 218, 236)`.
+
+**No object, and no default-styled label — on purpose.** `Style::default()`
+carries `width = 0.01`, which at `s = 32` is a stroke radius of
+`0.5 · 32 · 0.01 = 0.16` px: sub-pixel, so a default-styled segment or dot in
+this fixture would render as a faint partial-coverage smudge whose bytes depend
+on the AA ramp rather than on anything this golden is testing. Every label
+above therefore carries an explicit `Style`, and there is no geometry at all.
+Text over strokes is not lost coverage: run 3 over run 1 exercises the same
+`src_over` path, and SPEC-0006's own golden already owns the stroke bytes.
+
+**The font specimen golden** (`tests/golden/font_specimen.ppm`) — §5 Q4,
+accepted and **mandatory**. Same frame and view as above (96 × 48 over
+`(3.0, 1.5)`, `s = 32`, black, 13 837 bytes), so `k = 1` cells are 6 × 8 px and
+the frame is exactly **16 columns × 6 rows = 96 cells** for 95 glyphs. Six
+labels, all `Anchor::Screen(ScreenAnchor::TopLeft)`, `Align::Left`,
+`size = 0.25`, white, `width: 0.0`, `alpha: 1.0`; row `r` (0-based) carries the
+16 characters `0x20 + 16r ..= 0x20 + 16r + 15` — the last row carries the
+final 15, `0x70..=0x7E` — at `offset = Pt2 { x: 0.0, y: -(6 + 8r) / 32 }`,
+which puts baselines on pixel rows 6, 14, 22, 30, 38 and 46. Every offset is
+dyadic, every cell top is a multiple of 8, and each row's descender row sits
+two rows clear of the next row's cell top, so no glyph can collide with its
+neighbour and a collision in the blessed image is a real defect.
 
 ## 4. Non-goals
 
@@ -1318,58 +1778,50 @@ character.
   a future requirement needs interleaving, it adds an explicit ordering key —
   additively, since `objects` and `labels` remain separate `Vec`s.
 - **No unification of the view window between `Scene` and the sinks.** The
-  duplication is real, contained by defaults and a test, and named as debt
-  (§2.4.3): the fix is a breaking change to two landed sink constructors and
-  therefore its own requirement.
-- **No changes to `sink.rs`, `camera.rs`, `track.rs`, `record.rs`,
-  `examples/first_light/scene.rs`, or `examples/tumbling_box/`.** R-0003's and
-  R-0006's golden fixtures are byte-unchanged (§2.7) — the cheapest proof this
-  spec is additive.
+  duplication is real and is now *detected* — `Scene::render` rejects a
+  mismatch before frame 0 (§2.4.3) — but not removed. Removing it means a
+  single `View` owned by the `Scene` and read by the sinks, which is a breaking
+  change to two landed sink constructors and therefore its own requirement.
+- **No `view()` consumer other than validation.** `FrameSink::view` is read in
+  exactly one place, by `Scene::render`, to compare. It never reaches
+  `Scene::eval`, never influences a coordinate, and never appears in an emitted
+  byte. A sink that wanted to *drive* placement from its own window would be
+  the design §2.4.3 rejects.
+- **No changes to `camera.rs`, `track.rs`, `record.rs`,
+  `examples/first_light/scene.rs`, or `examples/tumbling_box/`.** `sink.rs` is
+  amended, additively and only as described in §2.4.3 and §2.14 item 8; every
+  existing `impl FrameSink`, in the crate and in the tests, compiles unchanged.
+  R-0003's and R-0006's golden fixtures are byte-unchanged (§2.7) — the
+  cheapest proof this spec is additive.
 - **No throughput work**: no glyph caching, no `Cow<'_, str>` in `Prim2`, no
   atlas. R-0011.
 
 ## 5. Open questions
 
-Recorded for architect adjudication; each carries a recommendation, in the
-house pattern (architect-recommended → owner acceptance).
+**None.** All seven were adjudicated at the architect review of 2026-08-27 and
+are recorded in §7. Kept here as a short ledger, so a reader of this section
+does not have to reconstruct what was asked:
 
-- **Q1 — `font.rs` as its own module.** Recommended: yes. It contradicts
-  SPEC-0006 §2.0's "no module per single caller" only in letter: the face
-  introduces no type, trait or indirection, and inlining ~100 lines of `const`
-  bitmap into `ppm.rs` would bury the logic that needs reading (§2.0).
-- **Q2 — moving `ObjectId` from `scene.rs` to `object.rs`.** Recommended: yes,
-  it removes a genuine module cycle and the public path is unchanged (§2.0.1).
-  The alternative is to define `Label`/`Anchor` inside `scene.rs`.
-- **Q3 — `Corner` is four corners only.** Recommended: ship four, as R-0007 AC4
-  words it. The owner should know the cost: **there is no way to centre a
-  title**, which is the most likely first creator request. Adding
-  `Top`/`Bottom`/`Left`/`Right`/`Center` is one variant plus one match arm,
-  purely additive. Related: whether `Corner` should carry a default safe-area
-  inset rather than resolving to the literal corner (§2.4.3) — recommended
-  **no**, keep it literal and predictable, with the inset expressed as
-  `offset`.
-- **Q4 — the font-specimen golden** (`tests/golden/font_specimen.ppm`, 96 × 48,
-  all 95 glyphs at `k = 1`, every coordinate dyadic). Recommended: **yes**. A
-  hand-authored face is 665 bytes nobody will proofread in a diff; one blessed
-  image, reviewed once by eye, is the only practical way to know the table is
-  right, and it makes any later glyph edit visible.
-- **Q5 — the substitute character `'?'`.** Recommended: keep. Its one weakness
-  (indistinguishable from an author-typed `?`) is answered by
-  `is_ascii_renderable`. Changing it later costs one line and one blessed
-  golden.
-- **Q6 — `font-family` pinned to `monospace`.** Recommended: pinned. A
-  `SvgSink::with_font_family` knob would move golden bytes and would not
-  improve cross-sink agreement, which is limited by the embedded face, not by
-  the SVG side. Additive later if a creator asks.
-- **Q7 — default `size` of 0.08 image units** (48 px em, 36 px cap at 1080p).
-  Recommended: accept; owner taste, one constant, no structural consequence.
+| # | question | outcome |
+|---|---|---|
+| Q1 | `font.rs` as its own module | **Yes.** It contradicts SPEC-0006 §2.0's "no module per single caller" only in letter: the face introduces no type, trait or indirection — it is data — and inlining ~100 lines of `const` bitmap would bury `ppm.rs`'s logic (§2.0) |
+| Q2 | move `ObjectId` from `scene.rs` to `object.rs` | **Yes.** It removes a genuine `label → scene → label` module cycle and the public path `motoreel::ObjectId` is unchanged (§2.0.1). The stale R-0007 doc comments on both files are fixed in the same edit (§2.14 item 4) |
+| Q3 | `Corner` as four corners only | **Moot.** The owner amended R-0007 AC4 to a 3 × 3 grid; the type is now `ScreenAnchor` with nine variants (§2.2, §2.4.3). The related sub-question — a safe-area inset instead of the literal edge — is still declined, for the reason it was raised with: the inset is already expressible as `offset` |
+| Q4 | the font-specimen golden | **Yes, and mandatory.** The 665-byte hand-authored table carries all of AC6, and nobody proofreads 665 bytes in a diff. One blessed image, reviewed once by eye, is the only reviewable artefact the face will ever have, and it makes any later glyph edit visible. Pinned in §3 |
+| Q5 | the substitute character `'?'` | **Keep.** Its one weakness — indistinguishable from an author-typed `?` — is answered by `is_ascii_renderable`; every alternative is worse in a way §2.5 tabulates. Changing it later costs one line and one blessed golden |
+| Q6 | `font-family` pinned to `monospace` | **Pinned.** A `with_font_family` knob would move golden bytes and would not improve cross-sink agreement, which is limited by the embedded face, not by the SVG side. Additive later if a creator asks |
+| Q7 | default `size` of 0.08 image units | **Accepted.** 48 px em, 36 px cap height at 1080p over the default view — a readable caption. Owner taste, one constant, no structural consequence |
+
+One item is *not* an open question but is flagged for the owner rather than
+settled here: `Label::is_ascii_renderable` is public API no AC requires (§2.2).
+It stays, and the commitment belongs in **R-0007's** decision log at acceptance.
 
 ## 6. Acceptance criteria
 
 Each maps to an R-0007 AC; the qa agent derives the binding tests from these
 (tests first, red, then implementation) in
 `crates/motoreel/tests/r0007_anchored_labels.rs`, with unit tests for the
-private helpers (`to_ascii`, `corner_point`, `escape_text`, `font::glyph`, the
+private helpers (`to_ascii`, `screen_point`, `escape_text`, `font::glyph`, the
 `k` derivation and the alignment arithmetic) in each module's own
 `#[cfg(test)] mod tests` — the house pattern.
 
@@ -1408,18 +1860,40 @@ private helpers (`to_ascii`, `corner_point`, `escape_text`, `font::glyph`, the
   but whose anchor point is in front is **present** (§2.4.2). Plus: a label
   carrying an out-of-range `ObjectId` (scene built by struct literal) is
   absent, with no panic.
-- [ ] **AC4 — corner anchors are fixed.** For all four corners, across
-  `t ∈ {0, 1, 7}`, several camera poses (translated and rotated) and both
-  projections, `Text.at` is the **same bits every time** and equals
-  `(∓view.0/2, ±view.1/2) + offset` exactly. `Scene::view` set to a
-  non-default pair moves the corners correspondingly. A test asserts
-  `Scene::new`, `SvgSink::new` and `PpmSink::new` report the same default
+- [ ] **AC4 — screen anchors are fixed, over the full 3 × 3 grid.**
+  (a) The matrix is **nine cases, not four**: for every `ScreenAnchor` variant,
+  across `t ∈ {0, 1, 7}`, several camera poses (translated and rotated) and
+  both projections, `Text.at` is the **same bits every time** and equals
+  `screen_point(anchor, view) + offset` exactly, with the expected point
+  written out literally per variant rather than computed by the helper under
+  test. `Scene::view` set to a non-default pair moves all nine
+  correspondingly.
+  (b) The middle row and column are pinned as **`+0.0`**, by `to_bits`, not by
+  `==` — `Centre` is `(+0.0, +0.0)` for every `view`, including a `view` whose
+  halves are negative or non-finite, because those coordinates are a literal
+  and not arithmetic (§2.4.3). The five corner/edge variants under a
+  contract-violating `view` are absent (§2.12).
+  (c) `Scene::new`, `SvgSink::new` and `PpmSink::new` report the same default
   view, extending SPEC-0006 §2.1's two-sink assertion to three.
+  (d) **The view-agreement validator.** `Scene::render` with a sink whose
+  `view()` disagrees returns `ErrorKind::InvalidInput` and **writes no file**
+  (asserted on an empty output directory — the "before frame 0" clause is the
+  claim, so the absence of `frame_00000` is the evidence). Agreement renders
+  normally; a NaN `scene.view` against a finite sink view is rejected; a sink
+  that keeps the defaulted `view()` — the recording double already in
+  `tests/r0003_svg_sink.rs` — renders with no check and needs no edit, which
+  is the additivity claim made executable.
 - [ ] **AC5 — the SVG `<text>` element, and the untouched golden.**
   (a) String assertions on the exact pinned template (§2.6) for each `Align`,
-  for a `-0` y case, and for `size`/`alpha` values that exercise the default
-  float `Display` rule; style attributes always present, including
-  `fill-opacity="1"`; attribute order asserted literally, no XML parser.
+  and for `size`/`alpha` values that exercise the default float `Display`
+  rule; style attributes always present, including `fill-opacity="1"`;
+  attribute order asserted literally, no XML parser.
+  (a′) **The `-0` case is kept and made specific.** A label on any of
+  `MidLeft` / `Centre` / `MidRight` with no vertical offset has `at.y == +0.0`,
+  so §2.6's `{-at.y}` emits `y="-0"` — asserted as that literal substring, for
+  all three variants. This is a byte-level commitment, not an accident to be
+  normalized away: the same shape is already blessed in R-0003's golden
+  (`-0,0.25`), and `labels_00000.svg` carries it in its expected bytes (§3).
   (b) Escaping: `&`, `<`, `>` map to `&amp;`, `&lt;`, `&gt;`; `"` and `'` are
   emitted verbatim; a string of all 95 printable characters round-trips with
   exactly those three substitutions and no others.
@@ -1450,7 +1924,16 @@ private helpers (`to_ascii`, `corner_point`, `escape_text`, `font::glyph`, the
   (`tests/golden/frame_00000.ppm`) passes byte-unchanged.
   (g) `tests/golden/labels_00000.ppm` (96 × 48, `s = 32`) matches
   byte-for-byte, with SPEC-0006 §6 AC3's `(x, y, channel)` first-difference
-  reporter. (h) §5 Q4's `font_specimen.ppm`, if accepted.
+  reporter. Its scene is the one pinned in §3 — three labels, no objects — and
+  the derived table there (`x0`, `y0`, baseline row, and the two composite
+  results `(0, 90, 108)` and `(128, 218, 236)`) is asserted as *named pixel
+  probes* alongside the whole-file comparison, so a byte diff says which claim
+  broke rather than only that one did.
+  (h) **`font_specimen.ppm` is mandatory** (§5 Q4, accepted): 96 × 48, all 95
+  glyphs at `k = 1` in six 16-cell rows, matching byte-for-byte. It is the
+  only artefact in which the 665-byte face is reviewable; the test additionally
+  asserts that no row's ink reaches the next row's cell top, so a mis-authored
+  descender is caught as a failure and not merely as an ugly image.
 - [ ] **AC7 — determinism end to end.** Two renders of a label-bearing scene
   in one process into `CARGO_TARGET_TMPDIR/{a,b}` produce byte-identical
   files pairwise **for each sink independently** (§2.10 pins this reading);
@@ -1474,7 +1957,7 @@ private helpers (`to_ascii`, `corner_point`, `escape_text`, `font::glyph`, the
 
 | Date | Decision | Rationale |
 |------|----------|-----------|
-| 2026-08-27 | Labels live in a separate `Scene::labels: Vec<Label>`, not as a `Shape`/`Object` variant | A label is anchored, not posed: a corner label has no world position and would carry a lying `Track`; `Anchor::Pose` and `Object::track` would be two spellings of one idea; text is not a point set and does not scale with depth, so it cannot share `project_shape` (§2.1) |
+| 2026-08-27 | Labels live in a separate `Scene::labels: Vec<Label>`, not as a `Shape`/`Object` variant | A label is anchored, not posed: a screen-anchored label has no world position and would carry a lying `Track`; `Anchor::Pose` and `Object::track` would be two spellings of one idea; text is not a point set and does not scale with depth, so it cannot share `project_shape` (§2.1) |
 | 2026-08-27 | Draw order is two-phase: every object, then every label, insertion order within each | A label exists to be read; occlusion by a later object would make legibility depend on insertion order. Needs no sort, so SPEC-0003 §2.5's "the sink never sorts" is untouched (§2.1) |
 | 2026-08-27 | `add_label` mints no `LabelId` | Nothing in R-0007 references a label; `Scene::add` returns an id only because R-0002 recorded it as the RFC target API. `labels` is public, so an id is additive later (§2.1) |
 | 2026-08-27 | `Label` carries a sixth field, `size` (em height in image units); `Style::width` is unused for text | Reusing `Style::width` would make one `Style` mean two things across variants and break SPEC-0002 AC4's bit-exact passthrough; adding `size` to `Style` would change a landed type carried by four other variants (§2.2) |
@@ -1499,8 +1982,32 @@ private helpers (`to_ascii`, `corner_point`, `escape_text`, `font::glyph`, the
 | 2026-08-27 | The two sinks' text agreement is specified as an explicit guaranteed / bounded / not-guaranteed table, with `Align::Left` named as the tightest-agreeing alignment | R-0007 §4 requires the non-identity be stated. Naming *which* alignment diverges least, and by how much, is the difference between a disclaimer and a specification (§2.10) |
 | 2026-08-27 | R-0007 AC7's "byte-identical frames from both sinks" is pinned as *each sink is byte-identical across renders*, not SVG bytes == PPM bytes | The literal reading is impossible for two formats; leaving the ambiguity would either weaken a real guarantee or invent an unmeetable one (§2.10) |
 | 2026-08-27 | The PPM text golden uses a non-default 96 × 48 / `(3.0, 1.5)` view (`s = 32`) | Every cell height, baseline row and `k` is then dyadic and exact, so expected pixels are hand-derivable rather than rounding accidents. Default-view agreement is already SPEC-0006 AC2(b)'s job (§3) |
-| 2026-08-27 | `Corner` ships as four corners only, resolving to the literal corner with no safe-area inset | R-0007 AC4's wording, and §2 forbids premature abstraction — but the owner should decide knowingly, since it means no centred title. Additive to extend (§5 Q3) |
+| 2026-08-27 | **`Corner` → `ScreenAnchor`; four variants → nine.** Replaces the first draft's "ship four corners, as AC4 words it" decision | The first draft shipped four and flagged the cost — *no way to centre a title* — as §5 Q3 for the owner. The owner took the call and **amended R-0007 AC4 to a 3 × 3 grid**, so the spec follows: a spec may not stay one draft behind the requirement it realizes (§1.2). The rename is forced by the content — "corner" is a false name for `Centre` and the three edge midpoints, and `Corner::Centre` would be a lying identifier §2 forbids. `screen_point` resolves the middle row and column to the literal `0.0`, and the four corners are four of the nine, so every corner argument in this spec survives verbatim (§2.2, §2.4.3) (architect review) |
+| 2026-08-27 | The centred-title recipe is normative and shipped on the type's doc comment: `TopCentre` **plus** `Align::Center` **plus** a negative `offset.y` | The anchor is the baseline and the run starts at it, so `TopCentre` alone hangs a title to the right of centre and above the frame. The amendment that added the variant was made *for* the centred title; shipping the variant without the recipe would hand the owner half a fix (§2.4.3) (architect review) |
+| 2026-08-27 | **`FrameSink` gains a defaulted `fn view(&self) -> Option<(f64, f64)>`, read only by `Scene::render`, which returns `InvalidInput` on disagreement before frame 0.** Supersedes the "rejected: a `FrameSink::view()` hook" clause of the `Scene::view` row above | The first draft's containment — matching defaults plus a three-way default-agreement test — exercises only `(3.2, 1.8)`, the one configuration that *cannot* desynchronize; the moment an author calls `with_view` it is silent. The earlier rejection was aimed at a hook that **fed** anchor resolution; this one is a **validator**, so `eval` is unchanged and stays pure over `(scene, t)` and no golden moves. Additive via the default body (SPEC-0004's amendment shape, applied to a trait), and it joins the `fps`/`duration` checks already in `Scene::render` under the validate-before-side-effects policy. Rejected as cheaper: `SvgSink::for_scene` / `PpmSink::for_scene` constructors — nothing forces a constructor's use, and the author who reaches for `with_view` is exactly the one who forgets `scene.view` (§2.4.3) (architect review) |
+| 2026-08-27 | §2.3's exhaustive-match list is **four sites**, counted against the tree: `svg.rs::write_prim`, `ppm.rs` (not yet existing), and `prim_parts` in **both** `tests/r0002_scene_camera.rs` and `tests/r0004_physics_playback.rs` | The first draft said "three matches exist today" and was wrong twice: it missed R-0004's second copy of the helper, and it counted `ppm.rs`, which is not in the tree. R-0004 grew the duplicate deliberately rather than sharing one helper across integration binaries, so the arm is simply written twice (§2.3) (architect review) |
+| 2026-08-27 | `every_f64` **does** cover `Prim2::Text`'s `size`, via one `if let` beside its `prim_parts` call; `prim_parts` and `prim_bits` are not widened | The property those helpers audit is *finite author data in ⇒ finite data out*, and they already push `style.width` on exactly the passthrough footing §2.3 gives `size`. A helper named `every_f64` that skipped one of a variant's f64s would misstate its own coverage. Not widening `prim_parts` leaves its five other call sites untouched; string determinism is AC7's clause, not `prim_bits`' job (§2.3) (architect review) |
+| 2026-08-27 | The normative escaping table's last row is **"any other `char` → verbatim"**, matching the code's total `_ => out.push(c)`; the contract-violation case is written down | The table previously said `0x20..=0x7E`, a domain narrower than the `match` it specifies, which left the one interesting case undefined. Consequence stated honestly: a violated ASCII invariant is the single case where the sinks disagree about the **string** — SVG emits UTF-8 verbatim and stays well-formed, PPM draws one `'?'` per *byte* and shifts the advance — so §2.10's cross-sink string guarantee is explicitly **conditional** on the invariant that `Scene::eval` upholds (§2.6, §2.10, §2.12) (architect review) |
+| 2026-08-27 | `draw_text` uses `font::CELL_W`, `CELL_H` and `BASELINE` instead of the literals `6`, `8.0`, `6` | Declaring three constants and hard-coding their values next to them is dead code (§2) and lets the two drift. The row's 5-bit width stays literal: it is the table's storage layout, not a metric anything else reads (§2.8, §2.9) (architect review) |
+| 2026-08-27 | The raster dimensions are renamed `Canvas::dims` (and `to_pixel` / `Tile::*`'s parameter), leaving `size` to mean the text em height alone | `Prim2::Text` brings a third meaning of `size` into `ppm.rs`, and `draw_text` holds two of them in scope one field-access apart — a swap the compiler cannot catch. Private rename, no public API, no golden (§2.9, §2.13 edit 7) (architect review) |
+| 2026-08-27 | §2.13's "complete list" is **seven** edits, not five: `Canvas::draw`'s body is extracted verbatim into `draw_stroke`, and the `dims` rename is edit 7 | Edit 1 makes `draw` a two-arm router, which necessarily moves SPEC-0006's whole rasterizer body — the largest hunk a reviewer will see in `ppm.rs` — so "complete" has to include it. Pure extraction, no expression edited or reordered, so SPEC-0006's stroke golden cannot move (§2.13) (architect review) |
+| 2026-08-27 | The stale doc comments at `src/object.rs:11` and `src/scene.rs:10` are renumbered R-0007 → **R-0010** in this spec's diff | Both point a reader at a requirement that is now about text; `scene.rs:10` would additionally be wrong in tense, since `ObjectId` stops being inert here. `scene.rs` is in the diff anyway for the `ObjectId` move and `object.rs` to receive it, so the fix costs nothing (§2.14 item 4) (architect review) |
+| 2026-08-27 | `Label::is_ascii_renderable` is kept, and flagged for promotion into **R-0007's** decision log at owner acceptance | §2.5's argument for `'?'` has no exit without it, so removing it would weaken a decision the owner already has. But a public predicate is a compatibility commitment, and a spec should not mint public surface on its own authority (§1.2, §2.2) (architect review) |
+| 2026-08-27 | Both PPM goldens are pinned to exact scenes — anchors, offsets, alignments, strings, sizes, styles and derived pixel geometry — rather than described | "One `k = 2` run, one `k = 1` corner run, one at alpha 0.5" is a sketch nobody can bless bytes from. The fixture now also carries three exact `.5` rounding ties, so it pins SPEC-0006's ties-away-from-zero rule as a side effect (§3) (architect review) |
+| 2026-08-27 | Neither PPM golden contains default-styled ink, and `labels_00000.ppm` contains no objects at all | `Style::default().width = 0.01` is a stroke radius of 0.16 px at this fixture's `s = 32` — sub-pixel, so a default-styled dot or segment would render as an AA smudge whose bytes test the ramp rather than the glyphs. Stroke bytes are SPEC-0006's golden's job (§3) (architect review) |
+| 2026-08-27 | **R-0006 must be `Met` before implementation of this spec begins** — an ordering gate, not a paper dependency | `to_pixel`, `src_over`, `unit`, `Tile` and `Canvas` do not exist in the tree, and neither does `ppm.rs`: three of §2.13's seven edits have nothing to edit, and every "reused unchanged" item is reused from unwritten code. Reversing the order would mean re-deriving SPEC-0006's mapping here, which §2.13 exists to avoid (header, §2.13) (architect review) |
+| 2026-08-27 | `unit` is reused **by reference to SPEC-0006's corrected spelling**, not restated here | SPEC-0006's own architect revision is fixing that function for a clippy defect; this spec pins only its semantics (total, NaN → 0, `[0, 1]`), so there is no second copy to drift (§2.13) (architect review) |
+| 2026-08-27 | §3's golden narration corrected: the `Pose` label's `x` equals the circle's `cx` bit-for-bit and its `y` is the **exact negation** of `cy` | The draft claimed both were bit-identical, which the very block beneath it contradicted (`cy="-0.25"` against `y="0.25"`) — §2.6 emits `y` as `-p.y` for the counter-flip. The agreement AC3 asserts is real; the negation is the template's (§3) (architect review) |
+| 2026-08-27 | §5's seven open questions adjudicated: Q1 `font.rs` **yes**; Q2 `ObjectId` move **yes**; Q3 **moot** (superseded by the 3 × 3 amendment); Q4 font specimen **yes and mandatory**; Q5 `'?'` **keep**; Q6 `monospace` **pinned**; Q7 default `size = 0.08` **accept** | Q4 is the one upgraded rather than merely accepted: the 665-byte face carries all of AC6 and would otherwise be hand-authored with no reviewable artefact, so the specimen is a requirement of the fixture set and not an option in it (§5) (architect review) |
 
 ## Changelog
 
 - 2026-08-27 — created (Draft); submitted for architect review.
+- 2026-08-27 — architect review returned **BLOCK** (the spec predated its own
+  amended requirement) plus ten findings and two constitution notes. All
+  applied: AC4's 3 × 3 grid and the `ScreenAnchor` rename (the blocker), the
+  `FrameSink::view` validator, the corrected exhaustive-match census, the
+  escaping table's domain, the font constants, the `dims` rename, the stale
+  R-0007 doc comments, the seventh SPEC-0006 edit, exact PPM golden contents,
+  the R-0006 ordering gate, and the `unit` reference. §5 closed; §7 appended
+  to rather than rewritten.
