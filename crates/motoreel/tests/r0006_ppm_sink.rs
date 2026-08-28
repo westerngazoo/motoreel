@@ -679,22 +679,67 @@ fn ac4_half_alpha_white_over_black_is_exactly_128() {
     );
 }
 
-// AC4 — a polyline's joint shows no darker seam: coverage unions by max
-// rather than accumulating, so the joint pixel matches either arm's
-// interior instead of exceeding it.
+// AC4 — a polyline's joint shows no darker seam. Stated as the exact
+// property it rests on: coverage within one primitive unions **by max**,
+// so the two-arm frame is the pixelwise maximum of the two one-arm frames.
+//
+// This formulation is deliberate. An earlier version compared the joint
+// pixel against an arm's interior, and a mutation run showed it was
+// vacuous: at an interior joint both arms already give coverage 1.0, so
+// `max` and `sum` agree there and an accumulating rasterizer passed it.
+// The difference lives in the *fringe* around the corner, which the
+// pixelwise identity below covers exhaustively. Arms are rendered opaque
+// and in separate frames so `src_over` composites once per frame and the
+// comparison isolates the coverage rule.
 #[test]
 fn ac4_a_polyline_joint_has_no_darker_seam() {
-    // A right angle whose corner sits at the image origin.
-    let prims = vec![Prim2::Polyline {
-        points: vec![pt(-0.5, 0.0), pt(0.0, 0.0), pt(0.0, -0.5)],
-        style: style(Rgb::WHITE, 0.2, 0.5), // translucent: accumulation would show
-    }];
-    let frame = render_prims("r0006_ac4_joint", SMALL, VIEW, &prims);
-    let joint = pixel(&frame, SMALL, 32, 17)[1];
-    let arm = pixel(&frame, SMALL, 26, 17)[1];
-    assert_eq!(
-        joint, arm,
-        "the joint must match an arm's interior — union by max, not sum"
+    let s = style(Rgb::WHITE, 0.2, 1.0);
+    let (a, b, c) = (pt(-0.5, 0.0), pt(0.0, 0.0), pt(0.0, -0.5));
+
+    let both = render_prims(
+        "r0006_ac4_joint",
+        SMALL,
+        VIEW,
+        &[Prim2::Polyline {
+            points: vec![a, b, c],
+            style: s,
+        }],
+    );
+    let arm1 = render_prims(
+        "r0006_ac4_joint_arm1",
+        SMALL,
+        VIEW,
+        &[Prim2::Segment { a, b, style: s }],
+    );
+    let arm2 = render_prims(
+        "r0006_ac4_joint_arm2",
+        SMALL,
+        VIEW,
+        &[Prim2::Segment {
+            a: b,
+            b: c,
+            style: s,
+        }],
+    );
+
+    let head = header_for(SMALL).len();
+    let mut fringe = 0; // pixels where the two arms disagree — the corner
+    for i in head..both.len() {
+        let want = arm1[i].max(arm2[i]);
+        assert_eq!(
+            both[i],
+            want,
+            "byte {i} ({}): union must be the max of the arms, not their sum",
+            locate(i, SMALL)
+        );
+        if arm1[i] != arm2[i] && arm1[i].min(arm2[i]) > 0 {
+            fringe += 1;
+        }
+    }
+    assert!(
+        fringe > 0,
+        "the test is vacuous unless the arms actually overlap partially \
+         somewhere — that overlap is where an accumulating rasterizer shows"
     );
 }
 

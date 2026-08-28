@@ -1,7 +1,6 @@
 # SPEC-0006 — `PpmSink`: P6 raster frames and the in-crate stroke rasterizer
 
-- **Status:** Draft — architect review 2026-08-27 (REQUEST CHANGES)
-  applied; awaiting owner acceptance
+- **Status:** **Implemented and QA-signed-off** (2026-08-27)
 - **Realizes:** R-0006
 - **Author:** Claude (main session) with owner
 - **Created:** 2026-08-27
@@ -1090,7 +1089,7 @@ these (tests first, red, then implementation) in
 mapping, coverage rule and distance function in `ppm.rs`'s own
 `#[cfg(test)] mod tests`.
 
-- [ ] **AC1 — P6 format.** `frame(0, &[])` on a 4×2 sink writes
+- [x] **AC1 — P6 format.** `frame(0, &[])` on a 4×2 sink writes
   `frame_00000.ppm` whose bytes are exactly `b"P6\n4 2\n255\n"` followed by
   24 background bytes (full-file byte equality, no tolerance). Header text
   is exact for 1920×1080 and for a non-square size; `file_len ==
@@ -1099,7 +1098,7 @@ mapping, coverage rule and distance function in `ppm.rs`'s own
   directory is created by `new`; an existing file is overwritten; invalid
   size or view is `ErrorKind::InvalidInput` with the directory not created
   (§2.9).
-- [ ] **AC2 — same geometry as SVG.** (a) `to_pixel` equals
+- [x] **AC2 — same geometry as SVG.** (a) `to_pixel` equals
   `W/2 + s·x`, `H/2 − s·y` **bit-exactly** for pinned inputs, including
   `s = min(W/vw, H/vh)` in a letterboxed 200×100-over-3.2×1.8 case
   (unit test). (b) `SvgSink::new` and `PpmSink::new` report the same default
@@ -1116,7 +1115,7 @@ mapping, coverage rule and distance function in `ppm.rs`'s own
   letterboxes, proving `min` and not two scales. (e) The header `SvgSink`
   writes contains **no** `preserveAspectRatio` substring — §2.13's amendment
   to SPEC-0003 §2.5, asserted in the requirement that depends on it.
-- [ ] **AC3 — determinism.** Two renders of the same scene in one process
+- [x] **AC3 — determinism.** Two renders of the same scene in one process
   into `CARGO_TARGET_TMPDIR/{a,b}` produce byte-identical files pairwise
   and the expected file list. The §3 trig-free golden scene at 64×36 equals
   `include_bytes!("golden/frame_00000.ppm")` byte-for-byte, and its length
@@ -1128,7 +1127,7 @@ mapping, coverage rule and distance function in `ppm.rs`'s own
   like code. `.gitattributes` marks `crates/motoreel/tests/golden/*.ppm binary
 crates/motoreel/tests/golden/*.svg -text`,
   covering R-0003's existing SVG fixture as well as this one (§2.11).
-- [ ] **AC4 — anti-aliasing and width.** The §2.5 worked numbers, asserted
+- [x] **AC4 — anti-aliasing and width.** The §2.5 worked numbers, asserted
   exactly: a `r = 1` px stroke on a pixel boundary lights exactly two rows
   at `255` with no fringe; shifted half a pixel it lights one row at `255`
   and two at exactly `128`. A `r = 2` px stroke lights exactly four full
@@ -1153,7 +1152,7 @@ crates/motoreel/tests/golden/*.svg -text`,
   exactly `128`. A polyline's joint shows **no** darker seam — the
   union-by-max property, asserted by comparing the joint pixel against the
   interior of either arm.
-- [ ] **AC5 — full vocabulary, cull, finiteness.** Each of `Point`,
+- [x] **AC5 — full vocabulary, cull, finiteness.** Each of `Point`,
   `Segment`, `Polyline`, `Edges` produces ink at its mapped positions;
   `Prim2::Point { at, style }` and `Prim2::Segment { a: at, b: at, style }`
   produce **byte-identical frames**; a `Polyline` of 0 or 1 points and an
@@ -1162,7 +1161,7 @@ crates/motoreel/tests/golden/*.svg -text`,
   `Scene::eval`'s, inherited unchanged); every coordinate reaching the sink
   is finite by SPEC-0002's structural guarantee, tripwired by
   `debug_assert`.
-- [ ] **AC6 — end to end with stock ffmpeg.** The two probes skip with a
+- [x] **AC6 — end to end with stock ffmpeg.** The two probes skip with a
   printed note (`which ffmpeg`; then `ffmpeg -hide_banner -encoders`
   containing `libx264`); otherwise 15 frames at 320×180 (`0.25 s × 60 fps`,
   dyadic) are rendered into a **freshly cleaned** directory (§2.1 truncates
@@ -1178,7 +1177,7 @@ crates/motoreel/tests/golden/*.svg -text`,
   `ffmpeg -framerate 60 -i out/ppm/frame_%05d.ppm` — the R-0003 AC5
   precedent, and the reason the *documented* command carries no `-y`
   or `-nostdin` — and R-0003's own SVG line must still be present, unchanged.
-- [ ] **AC7 — zero new dependencies.** `[dependencies]` is exactly
+- [x] **AC7 — zero new dependencies.** `[dependencies]` is exactly
   `["garust"]`, `[dev-dependencies]` exactly `["proptest"]`, no
   `[build-dependencies]` and no target-specific dependency table — the
   `section_keys` assertion from R-0003 AC5, reused. Architect/PR gate on the
@@ -1240,3 +1239,13 @@ crates/motoreel/tests/golden/*.svg -text` (architect review S6-6) | R-0003's `fr
   is offset-qualified. The AC6 encode ran for real against Homebrew ffmpeg
   8.0 with libx264 and produced a valid 3.5 KB mp4 — the bug R-0006 was
   filed for is fixed end to end, not merely worked around.
+- 2026-08-27 — QA sign-off. Every AC verified and the suite **mutation-tested**:
+  six deliberate defects injected into `ppm.rs` (y-flip dropped, union-by-max
+  turned into accumulation, `unit` replaced by `f64::clamp`, width guard
+  removed, `min` dropped from the scale, `round` turned into truncation) were
+  each caught. One finding: the accumulation mutation was caught **only by the
+  golden**, not by `ac4_a_polyline_joint_has_no_darker_seam`, which compared a
+  *saturated* joint pixel where `max` and `sum` agree. That test is now the
+  exact identity it always meant — the two-arm frame is the pixelwise maximum
+  of the two one-arm frames, asserted over every byte, with a guard that fails
+  if the arms never partially overlap. It now catches the mutation directly.

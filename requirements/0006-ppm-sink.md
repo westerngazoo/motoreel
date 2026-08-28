@@ -1,6 +1,7 @@
 # R-0006 — `PpmSink`: video with a stock ffmpeg
 
-- **Status:** Accepted
+- **Status:** **Met** (2026-08-27) — all seven AC verified; suite
+  mutation-tested, one weak test found and strengthened
 - **Milestone:** MC (the creator pipeline)
 - **Owner:** Gustavo Delgadillo (westerngazoo)
 - **Created:** 2026-08-27
