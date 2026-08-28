@@ -1825,7 +1825,7 @@ private helpers (`to_ascii`, `screen_point`, `escape_text`, `font::glyph`, the
 `k` derivation and the alignment arithmetic) in each module's own
 `#[cfg(test)] mod tests` — the house pattern.
 
-- [ ] **AC1 — the `Label` shape and a scene that holds labels.** A `Label`
+- [x] **AC1 — the `Label` shape and a scene that holds labels.** A `Label`
   built through `new` + the four builders round-trips every field into the
   emitted `Prim2::Text` (text, position, size, align, style bit-for-bit via
   `to_bits`, matching R-0002 AC4's strictness). `Scene::new` starts with
@@ -1833,7 +1833,7 @@ private helpers (`to_ascii`, `screen_point`, `escape_text`, `font::glyph`, the
   scene holding both objects and labels emits **every object, then every
   label**, each in insertion order (the §2.1 rule, asserted on the slice).
   Defaults: `size == 0.08`, `Align::Left`, `Style::default()`.
-- [ ] **AC2 — point anchors project and cull like geometry.**
+- [x] **AC2 — point anchors project and cull like geometry.**
   (a) A point-anchored label and an `Object::point` at the same world point
   under the same camera produce **bit-identical** positions (`to_bits` on `x`
   and `y`), under both projections.
@@ -1846,7 +1846,7 @@ private helpers (`to_ascii`, `screen_point`, `escape_text`, `font::glyph`, the
   never-non-finite property: hostile anchors to ±1e9, behind/at-plane points,
   ideal points, focal in `(1e-6, 1e3]`, both projections — every emitted
   `Text.at` is finite.
-- [ ] **AC3 — pose anchors ride the track.** The headline assertion, computed
+- [x] **AC3 — pose anchors ride the track.** The headline assertion, computed
   independently rather than by re-running the implementation: for
   `t ∈ {−1, 0, 0.5, 1, 4, 7}` on a multi-key track,
   `eval(t)`'s `Text.at` equals
@@ -1860,7 +1860,7 @@ private helpers (`to_ascii`, `screen_point`, `escape_text`, `font::glyph`, the
   but whose anchor point is in front is **present** (§2.4.2). Plus: a label
   carrying an out-of-range `ObjectId` (scene built by struct literal) is
   absent, with no panic.
-- [ ] **AC4 — screen anchors are fixed, over the full 3 × 3 grid.**
+- [x] **AC4 — screen anchors are fixed, over the full 3 × 3 grid.**
   (a) The matrix is **nine cases, not four**: for every `ScreenAnchor` variant,
   across `t ∈ {0, 1, 7}`, several camera poses (translated and rotated) and
   both projections, `Text.at` is the **same bits every time** and equals
@@ -1883,7 +1883,7 @@ private helpers (`to_ascii`, `screen_point`, `escape_text`, `font::glyph`, the
   that keeps the defaulted `view()` — the recording double already in
   `tests/r0003_svg_sink.rs` — renders with no check and needs no edit, which
   is the additivity claim made executable.
-- [ ] **AC5 — the SVG `<text>` element, and the untouched golden.**
+- [x] **AC5 — the SVG `<text>` element, and the untouched golden.**
   (a) String assertions on the exact pinned template (§2.6) for each `Align`,
   and for `size`/`alpha` values that exercise the default float `Display`
   rule; style attributes always present, including `fill-opacity="1"`;
@@ -1905,7 +1905,7 @@ private helpers (`to_ascii`, `screen_point`, `escape_text`, `font::glyph`, the
   (d) A new trig-free golden `tests/golden/labels_00000.svg` matches
   byte-for-byte (§3), blessed via
   `MOTOREEL_BLESS=1 cargo test -p motoreel --test r0007_anchored_labels`.
-- [ ] **AC6 — `PpmSink` rasterizes from the embedded face.**
+- [x] **AC6 — `PpmSink` rasterizes from the embedded face.**
   (a) `font::glyph` unit tests: 95 entries, every row `≤ 0b11111`, `'A'` and
   `'g'` pinned as ASCII art, `glyph(0)` returns the `'?'` glyph in release.
   (b) The `k` derivation pinned exactly: at `s = 32`, `size 0.25 → k = 1` and
@@ -1934,7 +1934,7 @@ private helpers (`to_ascii`, `screen_point`, `escape_text`, `font::glyph`, the
   only artefact in which the 665-byte face is reviewable; the test additionally
   asserts that no row's ink reaches the next row's cell top, so a mis-authored
   descender is caught as a failure and not merely as an ugly image.
-- [ ] **AC7 — determinism end to end.** Two renders of a label-bearing scene
+- [x] **AC7 — determinism end to end.** Two renders of a label-bearing scene
   in one process into `CARGO_TARGET_TMPDIR/{a,b}` produce byte-identical
   files pairwise **for each sink independently** (§2.10 pins this reading);
   the file lists match. `Scene::eval` re-evaluated on the scene and on a
@@ -1942,7 +1942,7 @@ private helpers (`to_ascii`, `screen_point`, `escape_text`, `font::glyph`, the
   Both text goldens are trig-free by SPEC-0003 §2.6's construction rules, so
   the bytes are portable. `Cargo.toml` is unchanged — the `section_keys`
   assertion from R-0003 AC5 / R-0006 AC7, reused verbatim.
-- [ ] **AC8 — ASCII-only, total and documented.** Table-driven over
+- [x] **AC8 — ASCII-only, total and documented.** Table-driven over
   `["é", "→", "日本", "\t", "\n", "\r", "\u{0}", "\u{7F}", "e\u{301}", "🙂"]`:
   each yields the documented substitution, the **character count is
   preserved**, and nothing panics. `is_ascii_renderable` agrees with the
@@ -2011,3 +2011,23 @@ private helpers (`to_ascii`, `screen_point`, `escape_text`, `font::glyph`, the
   R-0007 doc comments, the seventh SPEC-0006 edit, exact PPM golden contents,
   the R-0006 ordering gate, and the `unit` reference. §5 closed; §7 appended
   to rather than rewritten.
+- 2026-08-27 — implemented and QA-signed-off. 167 tests pass; clippy and
+  rustfmt clean. The suite was **mutation-tested**, not merely re-run: nine
+  deliberate defects (`to_ascii` dropping instead of substituting; `Centre`
+  computed rather than a literal; a pose anchor ignoring `t`; a stale id
+  panicking; the baseline offset dropped; `Center` alignment forgetting the
+  halving; `escape_text` passing `&`; the `text-anchor` words swapped; one
+  glyph row corrupted) were each caught, every one by the test written for
+  it. The specimen fixture earns its keep: a single corrupted row of `'A'`
+  fails it at pixel (10, 19), which is that glyph's crossbar.
+
+  Two glyphs were caught during authoring by the face's own invariant test
+  rather than by eye — `'%'` ran into the descender row, and `';'` was
+  declared a descender but did not descend. `,` `:` `;` are now one family.
+
+  Both goldens matched their spec-derived predictions on first bless: the
+  SVG fixture reproduced §3's illustrative bytes exactly (including the
+  `y="0.25"` counter-flip against `cy="-0.25"` and the `y="-0"` witness),
+  and every derived placement in the PPM table — `(px, py)`, `w`, `x0`,
+  `y0` — came out as written, with both composites landing on the
+  ties-away rounding rule.

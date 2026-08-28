@@ -1,6 +1,7 @@
 # R-0007 — Anchored text labels
 
-- **Status:** Accepted
+- **Status:** **Met** (2026-08-27) — all eight AC verified; suite
+  mutation-tested across label.rs, ppm.rs, svg.rs and font.rs
 - **Milestone:** MC (the creator pipeline)
 - **Owner:** Gustavo Delgadillo (westerngazoo)
 - **Created:** 2026-08-27
