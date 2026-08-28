@@ -46,6 +46,24 @@ A garust-physics `World` rollout is recorded at fixed dt into the same
 | R-0004 | `SimTrack`: record a garust-physics `World` rollout into motor tracks (fixed dt; determinism golden test) | SPEC-0004 | Backlog |
 | R-0005 | First simulated videos: tumbling free body (Dzhanibekov-ready) and a pendulum, rendered through M1 | SPEC-0005 | Backlog |
 
+### MC — The creator pipeline  ·  *promoted ahead of M3, 2026-08-27*
+
+The project acquired an audience: STEM creators who want to show concepts
+and do not write Rust. Two things block them today, and both outrank the
+M3 glyph work.
+
+| Req | Capability | Spec | Status |
+|-----|------------|------|--------|
+| R-0006 | `PpmSink`: P6 raster frames with a stroke rasterizer — video with **stock ffmpeg**, no librsvg, no external rasterizer | SPEC-0006 | Discussing |
+| R-0007 | Anchored text labels: strings pinned to a world point, a body's pose, or a screen corner; rendered by both sinks | SPEC-0007 | Discussing |
+| R-0008 | *(next)* Declarative scenes: describe a scene as data and render it without writing Rust — the physics-lab manifest pattern, applied to film | — | Backlog |
+
+**Why the renumber.** The M3/M4 requirements below shift up by two; the
+GA glyphs and incidence shapes keep their content and lose their old ids.
+Recorded rather than silently renumbered: *old* R-0006 (glyphs) → R-0009,
+*old* R-0007 (JoinLine/MeetPoint) → R-0010, *old* R-0008 (PpmSink) is
+superseded by the new R-0006, *old* R-0009 (SIMD) → R-0011.
+
 ### M3 — GA mechanics visuals
 
 The study-companion layer: draw the algebra itself, live from simulation
@@ -53,15 +71,17 @@ state — the same way derived shapes are computed live from geometry.
 
 | Req | Capability | Spec | Status |
 |-----|------------|------|--------|
-| R-0006 | GA quantity glyphs: velocity/momentum bivectors as oriented plane elements, instantaneous screw axis of a motor | SPEC-0006 | Backlog |
-| R-0007 | Derived incidence shapes: `JoinLine`/`MeetPoint` resolved from transformed geometry each frame (RFC-012 A5) | SPEC-0007 | Backlog |
+| R-0009 | GA quantity glyphs: velocity/momentum bivectors as oriented plane elements, instantaneous screw axis of a motor | SPEC-0009 | Backlog |
+| R-0010 | Derived incidence shapes: `JoinLine`/`MeetPoint` resolved from transformed geometry each frame (RFC-012 A5) | SPEC-0010 | Backlog |
 
-### M4 — Raster & throughput
+### M4 — Throughput
+
+*(The raster sink moved to MC/R-0006: it became a creator blocker, not a
+performance nicety.)*
 
 | Req | Capability | Spec | Status |
 |-----|------------|------|--------|
-| R-0008 | `PpmSink` + stroke rasterizer; visual parity spot-check vs SVG (RFC-012 A4) | SPEC-0008 | Backlog |
-| R-0009 | SIMD fast path in the render loop: ≥3× over scalar on a 10k-vertex scene (RFC-012 A6) | SPEC-0009 | Backlog |
+| R-0011 | SIMD fast path in the render loop: ≥3× over scalar on a 10k-vertex scene (RFC-012 A6) | SPEC-0011 | Backlog |
 
 ## Sequencing rules
 

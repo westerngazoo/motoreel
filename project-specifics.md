@@ -17,6 +17,11 @@ change.
   for ffmpeg to encode. A visual companion for studying mechanics through the
   lens of GA. Built on [garust](https://github.com/westerngazoo/garust).
 - **Owner / final decision authority:** Gustavo Delgadillo (westerngazoo)
+- **Audience (owner decision, 2026-08-27):** STEM creators who do not write
+  Rust — teachers and science communicators who want to describe a scene and
+  get a video. This reframes the project from a personal tool into one with
+  users, and makes the eventual declarative (non-Rust) authoring path
+  essential rather than optional; see ROADMAP milestone MC.
 - **Repository URL:** https://github.com/westerngazoo/motoreel *(to be created)*
 
 ## Language & toolchain
@@ -58,9 +63,22 @@ The non-obvious domain facts:
   geometry every frame via PGA `join`/`meet` — the Manim constraint-driven
   drawing trick, for free.
 - **Deterministic offline rendering, not a game engine.** Same scene → same
-  frames, bit-for-bit. No real-time playback, windowing, input, audio, text
-  layout, or timeline UI. Video encoding stays outside the crate
-  (`ffmpeg -framerate 60 -i out/frame_%05d.svg …`).
+  frames, bit-for-bit. No real-time playback, windowing, input, audio, or
+  timeline UI. Video encoding stays outside the crate.
+- **Anchored text labels are IN scope (owner decision, 2026-08-27).**
+  Previously an explicit non-goal. Reversed because the project now has an
+  audience: an explanatory video that cannot name an axis, a quantity, or a
+  body is not an explainer. Scope is deliberately narrow — plain strings
+  anchored to world geometry (a point, a body's pose, or a screen corner),
+  so a label can ride a moving object. **No layout engine, no LaTeX, no
+  rich text**; those remain out of scope and their absence is documented,
+  not hidden.
+- **The encode path must work with stock ffmpeg (owner decision,
+  2026-08-27).** The documented SVG command was found broken in practice:
+  ffmpeg ships an `svg_pipe` demuxer but no SVG *decoder* unless built with
+  librsvg, so `-i frame_%05d.svg` fails on an ordinary install. The raster
+  sink (P6 PPM) is the answer — verified to encode with stock ffmpeg and no
+  external rasterizer — and is promoted out of M4 accordingly.
 - **Zero dependencies in the core** — the garust discipline. Frame sinks are
   pure text SVG and binary P6 PPM. `std` is required (file I/O).
 - **Angles are radians measured against TAU**, matching garust convention.
