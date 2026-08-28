@@ -1,6 +1,6 @@
 # R-0007 — Anchored text labels
 
-- **Status:** Draft
+- **Status:** Accepted
 - **Milestone:** MC (the creator pipeline)
 - **Owner:** Gustavo Delgadillo (westerngazoo)
 - **Created:** 2026-08-27
@@ -35,8 +35,11 @@ scope below keeps it from becoming a typesetting project.
 ## 3. Acceptance criteria
 
 - **AC1.** A `Label` carries its string, an `Anchor`, an offset in image
-  units, an alignment, and a `Style`; a scene may hold labels alongside
-  objects.
+  units, an alignment, a **`size`** (em height in image units), and a
+  `Style`; a scene may hold labels alongside objects. The `size` field is
+  separate from `Style` because SVG needs a `font-size` and the raster
+  sink a cell height, and reusing `Style::width` would make one type mean
+  two different things across `Prim2` variants.
 - **AC2.** A point-anchored label projects through the camera exactly as
   geometry does, obeying the same whole-primitive cull rule (behind the
   camera ⇒ the label is absent, never NaN-positioned).
@@ -51,8 +54,11 @@ scope below keeps it from becoming a typesetting project.
   most common thing an explainer needs (found in SPEC-0007 review).
 - **AC5.** `SvgSink` emits one pinned `<text>` element per label, with
   the byte-determinism rules of R-0003 (fixed attribute order, default
-  float `Display`, no value-dependent branching), and the existing
-  golden fixture stays byte-unchanged.
+  float `Display`). The no-value-dependent-branching rule is refined for
+  text: **the element and attribute skeleton stays value-independent,
+  and exactly one text run per label is value-dependent, through a total
+  pure escaping map** — text content cannot be emitted any other way.
+  The existing R-0003 golden fixture stays byte-unchanged.
 - **AC6.** `PpmSink` rasterizes labels from an in-crate bitmap font, at
   the same anchor positions, deterministically.
 - **AC7.** Determinism end to end: same scene and `t` ⇒ byte-identical
@@ -83,6 +89,8 @@ None — scope settled with the owner on 2026-08-27.
 | 2026-08-27 | Text is in scope, reversing a documented non-goal | The project has an audience now; an explainer must be able to name what it shows (owner) |
 | 2026-08-27 | Plain strings, anchored to geometry — no markup, no LaTeX | Covers axis names, quantities and callouts, which is the whole ask; a typesetting engine is a different project (owner) |
 | 2026-08-27 | Three anchor kinds: world point, body pose, screen corner | The pose anchor is the one that makes labels *ride* moving objects — the capability an explainer actually needs (owner) |
+| 2026-08-27 | `Label` carries a sixth field, `size` | SVG needs a font-size and the raster sink a cell height; reusing `Style::width` would overload one type across variants, and adding it to `Style` would change a landed type four other variants carry (architect) |
+| 2026-08-27 | AC5's branching rule refined for text rather than reinterpreted by the spec | A spec may not quietly redefine a requirement clause (§1.2); the skeleton stays value-independent and the one text run is value-dependent through a total map (architect) |
 | 2026-08-27 | Screen anchors are a 3×3 grid, not four corners | The first draft made a centred title impossible — an obvious miss for an explainer, surfaced by the SPEC-0007 draft. Additive fix; the corners are four of the nine |
 | 2026-08-27 | Sinks may differ in glyph rendering, and say so | The raster sink needs an embedded face; the SVG sink should use real fonts. Pretending they match would be the dishonest option (owner) |
 

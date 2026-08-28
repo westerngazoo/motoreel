@@ -54,8 +54,8 @@ M3 glyph work.
 
 | Req | Capability | Spec | Status |
 |-----|------------|------|--------|
-| R-0006 | `PpmSink`: P6 raster frames with a stroke rasterizer — video with **stock ffmpeg**, no librsvg, no external rasterizer | SPEC-0006 | Discussing |
-| R-0007 | Anchored text labels: strings pinned to a world point, a body's pose, or a screen corner; rendered by both sinks | SPEC-0007 | Discussing |
+| R-0006 | `PpmSink`: P6 raster frames with a stroke rasterizer — video with **stock ffmpeg**, no librsvg, no external rasterizer | SPEC-0006 | Accepted; spec in architect revision |
+| R-0007 | Anchored text labels: strings pinned to a world point, a body's pose, or a screen corner; rendered by both sinks | SPEC-0007 | Accepted; spec in architect revision (blocked on R-0006 landing first) |
 | R-0008 | *(next)* Declarative scenes: describe a scene as data and render it without writing Rust — the physics-lab manifest pattern, applied to film | — | Backlog |
 
 **Why the renumber.** The M3/M4 requirements below shift up by two; the
