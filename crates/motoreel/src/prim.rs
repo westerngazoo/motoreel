@@ -61,6 +61,21 @@ impl Default for Style {
     }
 }
 
+/// Horizontal placement of a text run relative to its anchor point.
+///
+/// Maps 1:1 to SVG `text-anchor` (`start` / `middle` / `end`). motoreel text
+/// is ASCII, single-line and left-to-right (R-0007 §4), so the directional
+/// names are accurate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Align {
+    /// The anchor is the run's left edge.
+    Left,
+    /// The anchor is the run's horizontal centre.
+    Center,
+    /// The anchor is the run's right edge.
+    Right,
+}
+
 /// A flat 2D drawing primitive — everything a sink needs, no trace of 3D.
 ///
 /// Invariant upheld by `Scene::eval`: every coordinate is finite. Styles
@@ -97,6 +112,25 @@ pub enum Prim2 {
         /// Image-space endpoint pairs, in order.
         segments: Vec<(Pt2, Pt2)>,
         /// Stroke style, passed through unchanged.
+        style: Style,
+    },
+    /// A single line of printable-ASCII text pinned to one image-space
+    /// point.
+    ///
+    /// Invariants upheld by [`crate::Scene::eval`]: `at` is finite, and
+    /// every byte of `text` lies in `0x20..=0x7E`. `size` is author data
+    /// under the same passthrough rule as [`Style`] — carried verbatim,
+    /// guarded by each sink, never silently sanitized.
+    Text {
+        /// Image position of the alignment point, on the text baseline.
+        at: Pt2,
+        /// The line to draw: printable ASCII, one line, no markup.
+        text: String,
+        /// Em height in image units. Contract: finite and > 0.
+        size: f64,
+        /// Horizontal placement of `at` relative to the run.
+        align: Align,
+        /// Fill colour and opacity; [`Style::width`] is unused for text.
         style: Style,
     },
 }

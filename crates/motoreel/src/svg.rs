@@ -10,7 +10,7 @@ use std::fmt::Write as _;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::prim::{Prim2, Pt2, Style};
+use crate::prim::{Align, Prim2, Pt2, Style};
 use crate::sink::FrameSink;
 
 /// Writes one `frame_%05d.svg` per frame into a directory (RFC-012 §3.3).
@@ -21,6 +21,7 @@ pub struct SvgSink {
     dir: PathBuf,
     header: String,
     buf: String,
+    view: (f64, f64),
 }
 
 impl SvgSink {
@@ -75,6 +76,7 @@ impl SvgSink {
             dir,
             header,
             buf: String::new(),
+            view,
         })
     }
 
@@ -150,11 +152,74 @@ impl SvgSink {
                     style.alpha,
                 );
             }
+            Prim2::Text {
+                at,
+                text,
+                size,
+                align,
+                style,
+            } => {
+                debug_assert_finite(at);
+                // `transform="scale(1 -1)"` undoes the document group's
+                // flip, so glyphs are upright and this element's own
+                // coordinates are y-down: hence `-y`. Emitting a second
+                // <g> instead would move R-0003's golden bytes (§2.7).
+                let _ = write!(
+                    self.buf,
+                    "<text transform=\"scale(1 -1)\" x=\"{}\" y=\"{}\" \
+                     font-family=\"monospace\" font-size=\"{}\" \
+                     text-anchor=\"{}\" xml:space=\"preserve\" \
+                     fill=\"{}\" fill-opacity=\"{}\">",
+                    at.x,
+                    -at.y,
+                    size,
+                    anchor_word(*align),
+                    hex(style),
+                    style.alpha,
+                );
+                escape_text(text, &mut self.buf);
+                let _ = writeln!(self.buf, "</text>");
+            }
+        }
+    }
+}
+
+/// SVG's `text-anchor` keyword for an [`Align`] — a closed set of literals,
+/// so no attribute value can ever contain a metacharacter (§2.6).
+fn anchor_word(align: Align) -> &'static str {
+    match align {
+        Align::Left => "start",
+        Align::Center => "middle",
+        Align::Right => "end",
+    }
+}
+
+/// XML element-content escaping — the only escaping motoreel performs.
+///
+/// `text` is printable ASCII by `Prim2::Text`'s invariant, so three
+/// metacharacters exhaust the interesting cases: no control character and
+/// no numeric character reference can arise. `"` and `'` are legal in
+/// element content and this string never enters an attribute value.
+///
+/// The map is **total over `char`**, not over `0x20..=0x7E`: the fallback
+/// arm passes anything else through, so a hand-built `Prim2` that violates
+/// the invariant still yields well-formed UTF-8 (§2.6, §2.10).
+fn escape_text(text: &str, out: &mut String) {
+    for c in text.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            _ => out.push(c),
         }
     }
 }
 
 impl FrameSink for SvgSink {
+    fn view(&self) -> Option<(f64, f64)> {
+        Some(self.view)
+    }
+
     fn frame(&mut self, index: usize, prims: &[Prim2]) -> io::Result<()> {
         self.buf.clear();
         self.buf.push_str(&self.header);

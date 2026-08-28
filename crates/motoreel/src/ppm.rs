@@ -30,6 +30,8 @@ type Px = (f64, f64);
 /// same picture — the defaults are deliberately identical.
 pub struct PpmSink {
     dir: PathBuf,
+    /// The centred image-space window this sink renders (R-0007 AC4).
+    view: (f64, f64),
     /// Frozen at construction: ASCII, no float formatting (§2.2).
     header: Vec<u8>,
     canvas: Canvas,
@@ -91,9 +93,10 @@ impl PpmSink {
 
         Ok(PpmSink {
             dir,
+            view,
             header: format!("P6\n{} {}\n255\n", size.0, size.1).into_bytes(),
             canvas: Canvas {
-                size,
+                dims: size,
                 // `min` is what SVG's `xMidYMid meet` does; two independent
                 // scales would skew every angle (§2.3).
                 scale: (f64::from(size.0) / view.0).min(f64::from(size.1) / view.1),
@@ -117,6 +120,10 @@ impl PpmSink {
 }
 
 impl FrameSink for PpmSink {
+    fn view(&self) -> Option<(f64, f64)> {
+        Some(self.view)
+    }
+
     fn frame(&mut self, index: usize, prims: &[Prim2]) -> io::Result<()> {
         self.canvas.clear();
         for prim in prims {
@@ -135,7 +142,7 @@ impl FrameSink for PpmSink {
 /// a module per single abstraction is the premature abstraction the
 /// constitution forbids. The R-0007 promotion path is SPEC-0006 §2.12.
 struct Canvas {
-    size: (u32, u32),
+    dims: (u32, u32),
     /// Pixels per image unit — `min(W/vw, H/vh)` (§2.3).
     scale: f64,
     background: Rgb,
@@ -157,9 +164,47 @@ impl Canvas {
         }
     }
 
-    /// Rasterize one primitive: union coverage of its round-capped
-    /// segments, composited src-over in a single pass (§2.5).
+    /// Route one primitive to its rasterizer.
+    ///
+    /// Text routes **first**: the stroke guards in `draw_stroke` key off
+    /// `Style::width`, which text does not use, and would wrongly reject a
+    /// label whose width is 0 (SPEC-0007 §2.13 edit 1). All five variants
+    /// are listed by name — still no `_` arm, so a sixth is a compile error.
     fn draw(&mut self, prim: &Prim2) {
+        match prim {
+            Prim2::Text {
+                at,
+                text,
+                size,
+                align,
+                style,
+            } => self.draw_text(*at, text, *size, *align, *style),
+            Prim2::Point { .. }
+            | Prim2::Segment { .. }
+            | Prim2::Polyline { .. }
+            | Prim2::Edges { .. } => self.draw_stroke(prim),
+        }
+    }
+
+    /// Blit one ASCII run from the embedded face (SPEC-0007 §2.8, §2.9).
+    fn draw_text(
+        &mut self,
+        _at: Pt2,
+        _text: &str,
+        _size: f64,
+        _align: crate::prim::Align,
+        _style: Style,
+    ) {
+        unimplemented!("R-0007: Canvas::draw_text")
+    }
+
+    /// Rasterize one stroke primitive: union coverage of its round-capped
+    /// segments, composited src-over in a single pass (§2.5).
+    ///
+    /// SPEC-0006's `draw` body, extracted verbatim so `draw` could become a
+    /// router — not one expression edited or reordered, which is why the
+    /// stroke golden cannot move (SPEC-0007 §2.13 edit 6).
+    fn draw_stroke(&mut self, prim: &Prim2) {
         let style = style_of(prim);
         let radius = 0.5 * self.scale * style.width;
         let alpha = unit(style.alpha);
@@ -171,23 +216,23 @@ impl Canvas {
             return;
         }
 
-        let (scale, size) = (self.scale, self.size);
+        let (scale, dims) = (self.scale, self.dims);
         self.segments.clear();
-        push_segments(prim, |p| to_pixel(p, scale, size), &mut self.segments);
+        push_segments(prim, |p| to_pixel(p, scale, dims), &mut self.segments);
         // The finite contract is SPEC-0002's; the debug_assert is the
         // tripwire, the retain keeps `floor`/`ceil` → u32 honest (§2.9).
         debug_assert!(self.segments.iter().all(|&(a, b)| finite(a) && finite(b)));
         self.segments.retain(|&(a, b)| finite(a) && finite(b));
 
         let pad = radius + 0.5; // the AA ramp's reach beyond the boundary
-        let Some(tile) = Tile::around(&self.segments, pad, size) else {
+        let Some(tile) = Tile::around(&self.segments, pad, dims) else {
             return;
         };
         self.coverage.clear();
         self.coverage.resize(tile.area(), 0.0);
 
         for &(a, b) in &self.segments {
-            let Some(band) = tile.intersect(Tile::around(&[(a, b)], pad, size)) else {
+            let Some(band) = tile.intersect(Tile::around(&[(a, b)], pad, dims)) else {
                 continue;
             };
             for y in band.y0..band.y1 {
@@ -206,7 +251,7 @@ impl Canvas {
             for x in tile.x0..tile.x1 {
                 let c = self.coverage[tile.offset(x, y)];
                 if c > 0.0 {
-                    let i = (y as usize * size.0 as usize + x as usize) * 3;
+                    let i = (y as usize * dims.0 as usize + x as usize) * 3;
                     src_over(&mut self.pixels[i..i + 3], style.stroke, c * alpha);
                 }
             }
@@ -221,10 +266,10 @@ impl Canvas {
 /// Image space (y-up, centred) → pixel space (y-down, centres at `+0.5`).
 /// The closed form of `SvgSink`'s `scale(1 -1)` ∘ viewBox ∘ `xMidYMid meet`
 /// chain — §2.3 derives it; the two sinks agree because of this function.
-fn to_pixel(p: Pt2, scale: f64, size: (u32, u32)) -> Px {
+fn to_pixel(p: Pt2, scale: f64, dims: (u32, u32)) -> Px {
     (
-        f64::from(size.0) / 2.0 + scale * p.x,
-        f64::from(size.1) / 2.0 - scale * p.y,
+        f64::from(dims.0) / 2.0 + scale * p.x,
+        f64::from(dims.1) / 2.0 - scale * p.y,
     )
 }
 
@@ -242,6 +287,9 @@ fn push_segments(prim: &Prim2, map: impl Fn(Pt2) -> Px, out: &mut Vec<(Px, Px)>)
         Prim2::Edges { segments, .. } => {
             out.extend(segments.iter().map(|(a, b)| (map(*a), map(*b))));
         }
+        // Text has no centre-lines; `draw` routes it before here. An empty
+        // arm, not a wildcard, so a sixth variant is still a compile error.
+        Prim2::Text { .. } => {}
     }
 }
 
@@ -283,7 +331,8 @@ fn style_of(prim: &Prim2) -> Style {
         Prim2::Point { style, .. }
         | Prim2::Segment { style, .. }
         | Prim2::Polyline { style, .. }
-        | Prim2::Edges { style, .. } => *style,
+        | Prim2::Edges { style, .. }
+        | Prim2::Text { style, .. } => *style,
     }
 }
 
@@ -321,7 +370,7 @@ struct Tile {
 
 impl Tile {
     /// The clamped bounding box of `segments` grown by `pad`.
-    fn around(segments: &[(Px, Px)], pad: f64, size: (u32, u32)) -> Option<Tile> {
+    fn around(segments: &[(Px, Px)], pad: f64, dims: (u32, u32)) -> Option<Tile> {
         let (mut lo, mut hi) = ((f64::MAX, f64::MAX), (f64::MIN, f64::MIN));
         for &(a, b) in segments {
             for p in [a, b] {
@@ -336,9 +385,26 @@ impl Tile {
         // cannot saturate into a nonsense tile.
         let x0 = (lo.0 - pad).floor().max(0.0) as u32;
         let y0 = (lo.1 - pad).floor().max(0.0) as u32;
-        let x1 = ((hi.0 + pad).ceil().max(0.0) as u32 + 1).min(size.0);
-        let y1 = ((hi.1 + pad).ceil().max(0.0) as u32 + 1).min(size.1);
+        let x1 = ((hi.0 + pad).ceil().max(0.0) as u32 + 1).min(dims.0);
+        let y1 = ((hi.1 + pad).ceil().max(0.0) as u32 + 1).min(dims.1);
         (x0 < x1 && y0 < y1).then_some(Tile { x0, y0, x1, y1 })
+    }
+
+    /// Clip an integer destination rectangle to the canvas — the glyph
+    /// run's counterpart to `around`, which clips a padded float box.
+    /// `around` is deliberately not refactored onto this: that would be
+    /// churn in landed logic for symmetry alone (SPEC-0007 §2.13 edit 4).
+    fn clip(x0: i64, y0: i64, x1: i64, y1: i64, dims: (u32, u32)) -> Option<Tile> {
+        let cx0 = x0.clamp(0, i64::from(dims.0)) as u32;
+        let cy0 = y0.clamp(0, i64::from(dims.1)) as u32;
+        let cx1 = x1.clamp(0, i64::from(dims.0)) as u32;
+        let cy1 = y1.clamp(0, i64::from(dims.1)) as u32;
+        (cx0 < cx1 && cy0 < cy1).then_some(Tile {
+            x0: cx0,
+            y0: cy0,
+            x1: cx1,
+            y1: cy1,
+        })
     }
 
     fn intersect(self, other: Option<Tile>) -> Option<Tile> {

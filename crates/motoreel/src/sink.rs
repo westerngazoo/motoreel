@@ -9,6 +9,18 @@ use crate::scene::Scene;
 pub trait FrameSink {
     /// Consume frame `index`'s primitives; any write failure propagates.
     fn frame(&mut self, index: usize, prims: &[Prim2]) -> io::Result<()>;
+
+    /// The image-space view window this sink renders, if it has one.
+    ///
+    /// Read **only** by [`Scene::render`], to reject a scene whose `view`
+    /// disagrees — screen-anchored labels would otherwise land off-frame
+    /// with no diagnostic. Never an input to [`Scene::eval`]: a frame stays
+    /// a pure function of `(scene, t)`, so no golden moves. Defaulted, so a
+    /// sink with no view window (a recorder, a counter) opts out by saying
+    /// nothing.
+    fn view(&self) -> Option<(f64, f64)> {
+        None
+    }
 }
 
 impl Scene {
@@ -34,6 +46,18 @@ impl Scene {
                 "duration must be finite and >= 0",
             ));
         }
+        // Validate before side effects — SPEC-0003 §2.4's rule, third
+        // clause. `!=` on (f64, f64): a NaN `self.view` never compares
+        // equal, so a view violating its own contract is rejected here too.
+        if let Some(v) = sink.view() {
+            if v != self.view {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "scene.view must match the sink's view window",
+                ));
+            }
+        }
+
         let frames = (self.duration * fps).ceil() as usize;
         for index in 0..frames {
             let t = index as f64 / fps; // derived, never accumulated

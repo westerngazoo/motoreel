@@ -13,6 +13,7 @@
 mod camera;
 mod ease;
 mod object;
+pub mod label;
 pub mod ppm;
 mod prim;
 mod record;
@@ -24,8 +25,9 @@ mod track;
 pub use camera::{Camera, Projection};
 pub use ease::Ease;
 pub use object::{Object, Shape};
+pub use label::{Anchor, Label, ScreenAnchor};
 pub use ppm::PpmSink;
-pub use prim::{Prim2, Pt2, Rgb, Style};
+pub use prim::{Align, Prim2, Pt2, Rgb, Style};
 pub use record::{record, RecordError};
 pub use scene::{ObjectId, Scene};
 pub use sink::FrameSink;

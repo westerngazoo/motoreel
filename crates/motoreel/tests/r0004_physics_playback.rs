@@ -228,6 +228,10 @@ fn prim_parts(prim: &Prim2) -> (u8, Vec<Pt2>, Style) {
         Prim2::Point { at, style } => (0, vec![*at], *style),
         Prim2::Segment { a, b, style } => (1, vec![*a, *b], *style),
         Prim2::Polyline { points, style } => (2, points.clone(), *style),
+        // R-0007's fifth variant, added here exactly as R-0004 added the
+        // `Edges` arm: position and style are the determinism currency;
+        // the string and `size` are asserted directly by R-0007's own AC7.
+        Prim2::Text { at, style, .. } => (4, vec![*at], *style),
         Prim2::Edges { segments, style } => (
             3,
             segments.iter().flat_map(|(a, b)| [*a, *b]).collect(),
@@ -246,6 +250,12 @@ fn every_f64(prims: &[Prim2]) -> Vec<f64> {
         for p in points {
             out.push(p.x);
             out.push(p.y);
+        }
+        // `size` is author passthrough data under exactly the rule
+        // `style.width` already follows, so a helper named `every_f64`
+        // must carry it too (SPEC-0007 §2.3).
+        if let Prim2::Text { size, .. } = prim {
+            out.push(*size);
         }
         out.push(style.width);
         out.push(style.alpha);
