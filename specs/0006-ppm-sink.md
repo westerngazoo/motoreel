@@ -1,6 +1,7 @@
 # SPEC-0006 — `PpmSink`: P6 raster frames and the in-crate stroke rasterizer
 
-- **Status:** Draft — awaiting architect review
+- **Status:** Draft — architect review 2026-08-27 (REQUEST CHANGES)
+  applied; awaiting owner acceptance
 - **Realizes:** R-0006
 - **Author:** Claude (main session) with owner
 - **Created:** 2026-08-27
@@ -8,7 +9,8 @@
   `Scene::render`, byte-determinism discipline, golden scheme),
   SPEC-0004 (`Prim2::Edges`)
 - **Module(s):** `crates/motoreel/src/ppm.rs`; additive amendments to
-  `lib.rs` and `examples/first_light/main.rs`
+  `lib.rs` and `examples/first_light/main.rs`; a repo-root `.gitattributes`
+  (§2.11). §2.13 amends SPEC-0003 §2.5 in text only — no code, no bytes.
 
 ## 1. Motivation
 
@@ -58,7 +60,11 @@ and an f64 expression — have no common form.
 
 **One module, not two.** The rasterizer is a private `Canvas` inside
 `ppm.rs`, not a `raster.rs` of its own: it has exactly one consumer, and a
-second module for a single caller is the premature abstraction §2 forbids.
+module per single *abstraction* — a `Canvas` extracted for one caller — is
+the premature abstraction §2 forbids. **The rule is about abstractions, not
+line counts.** A module that holds *data* rather than an abstraction — a
+`const` table, say — is a different question and is not what this sentence
+rejects; it is judged on whether inlining it would bury the logic around it.
 The R-0007 promotion path is recorded in §2.12.
 
 **`Cargo.toml` is untouched** (AC7): the rasterizer is `std` arithmetic and
@@ -150,6 +156,9 @@ P6\n{w} {h}\n255\n            ← the header, ASCII, built once at construction
 (SPEC-0003 §2.5): the static `<g transform="scale(1 -1)">`, the
 `viewBox="{-vw/2} {-vh/2} {vw} {vh}"`, and SVG's **default**
 `preserveAspectRatio="xMidYMid meet"` against `width="{W}" height="{H}"`.
+That third piece is an attribute `SvgSink` never emits, so the default is
+what applies — a load-bearing fact SPEC-0003 left unpinned. **§2.13 amends
+SPEC-0003 §2.5 to make its absence normative, and AC2 asserts it.**
 Composing them for an image-space point `(x, y)`:
 
 1. flip → user coordinates `(x, −y)`;
@@ -306,14 +315,17 @@ dst_ch    = round(out_ch) as u8                  // one rounding, at the end
   `as u8` cast never saturates in practice; the cast is nonetheless
   saturating-by-language, so the path is total.
 - **Guards, each SVG-matching rather than defensive:**
-  `radius > 0.0` must hold or the primitive paints nothing — SVG draws
-  nothing for `stroke-width="0"`, and without the guard the ramp would
-  paint a phantom 50 %-covered hairline for a zero-width stroke.
+  `radius.is_finite() && radius > 0.0` must hold or the primitive paints
+  nothing — SVG draws nothing for `stroke-width="0"`, and without the guard
+  the ramp would paint a phantom 50 %-covered hairline for a zero-width
+  stroke. The finiteness half is not decoration: an *infinite* radius passes
+  `> 0.0`, makes `pad` infinite, and makes the tile the whole canvas.
   `alpha == 0.0` returns early; it is observationally identical
   (`out = dst` exactly) and saves a full tile sweep.
   A NaN `width` or `alpha` paints nothing, via the total `unit` helper
   (`Style`'s contracts are documented but *not validated* — `prim.rs` says
-  so — and a NaN must not poison a frame).
+  so — and a NaN must not poison a frame). Both guards are spelled a
+  particular way for a reason no lint can see; §3 pins the spelling.
 
 **Worked numbers (hand-checkable, and the basis of the AC4 tests).** Black
 background, white stroke, `alpha = 1`, `r = 1` px:
@@ -328,6 +340,17 @@ background, white stroke, `alpha = 1`, `r = 1` px:
 At `r = 2` px with the centre-line on the boundary `y = 18.0`, rows 16–19
 are all exactly `1.0` and rows 15 and 20 exactly `0.0` — four full rows, no
 fringe. These are exact f64 identities, not tolerances.
+
+**The lit extent is `2r + 1` px; the summed coverage is `2r`.** Both follow
+from the ramp, and neither is "the stroke is `2r` px wide". The ramp reaches
+`r + 0.5` either side of the centre-line, so a cross-section touches
+`2r + 1` px of pixels: `r = 1` lights 3 px, `r = 2` lights **5**, not 6 —
+doubling the radius does not double the lit extent, and a test written
+against doubling fails on a correct rasterizer. What *is* exactly
+proportional to the width is the **ink**: the cross-section coverages sum to
+exactly `2r = s · width`, at every sub-pixel offset, for every `r ≥ 0.5`.
+§2.8 states that identity, proves it, and documents the sub-pixel regime
+where it fails; it is the form AC4 asserts.
 
 ### 2.6 Colour, alpha and the background
 
@@ -370,7 +393,14 @@ SPEC-0003 §2.6's argument, extended through the raster stage:
    but mixing them would silently move golden bytes). Consequently the
    *raster stage itself is bit-portable across platforms* — a stronger
    position than SPEC-0003's text stage needed, and the reason the golden
-   fixture can be trusted on any CI host.
+   fixture can be trusted on any CI host. **With one clause, stated rather
+   than assumed:** this holds on targets whose `f64` arithmetic *is* IEEE
+   double. x87-only targets (`i586-*` and friends, no SSE2) historically
+   compute in 80-bit registers and double-round when a value spills, which
+   can move a last-ulp result and therefore a golden byte. Every target this
+   project builds for — `x86_64` (SSE2 by baseline) and `aarch64` — is IEEE
+   double, so the claim stands as written; an x87 host is out of scope, and
+   the golden test is exactly where it would announce itself.
 5. **The platform caveat is unchanged and unhidden.** It lives in the
    *scene*, not the sink: a trig-bearing rollout may differ in the last ulp
    across libm versions (project-specifics; SPEC-0003 §2.6). So AC3's
@@ -384,42 +414,103 @@ SPEC-0003 §2.6's argument, extended through the raster stage:
    buffer is fully overwritten by the background fill each frame, and the
    coverage tile is `resize`d to `0.0` per primitive.
 
-### 2.8 The AC2 tolerance, stated precisely
+### 2.8 The AC2 tolerance and the AC4 width identity, stated precisely
 
-R-0006 AC2 says "within the rasterizer's documented tolerance". This is the
-documentation. It is split into a part that is **exact** and a part that is
-**bounded**, because conflating them is what makes such tolerances rot.
+R-0006 AC2 says "within the rasterizer's documented tolerance"; AC4 says
+stroke width is honoured "by an **exact identity**". This is the
+documentation for both. Every claim below is labelled **exact** or
+**bounded**, and every bounded one carries the precondition that makes it
+true — conflating those is what makes such statements rot.
 
 **Exact — the mapping.** For every image-space coordinate, `PpmSink`'s
 pixel-space position is `(W/2 + s·x, H/2 − s·y)` with `s = min(W/vw, H/vh)`,
 which is the closed form of the transform chain `SvgSink` emits (§2.3
-derives it). The mapping is verified by bit-exact assertions on
-`to_pixel`, not by tolerance. **The two sinks do not "approximately agree"
-on where things are; they agree exactly, and only the pixel filter differs.**
+derives it; §2.13 pins the `preserveAspectRatio` default it rests on). The
+mapping is verified by bit-exact assertions on `to_pixel`, not by tolerance.
+**The two sinks do not "approximately agree" on where things are; they agree
+exactly, and only the pixel filter differs.**
 
 **Exact — the ink region.** Both sinks describe the same point set: the
 Minkowski sum of the primitive's centre-lines with a disc of radius
 `s · width / 2` (§2.4). Round caps and round joins are not an approximation
 of SVG's; they are the same construction.
 
-**Bounded — where the ink lands on the grid (±1 px).**
+**Exact — the width identity (AC4), for `r ≥ 0.5` px.** For a straight
+stroke of radius `r = s · width / 2`, the coverages across its cross-section
+sum to exactly `s · width`, **bit-exactly, at every sub-pixel offset**:
 
-> For every primitive vertex mapping to pixel-space `(u, v)`, the frame
-> contains a pixel whose coverage is ≥ 0.5 within a Chebyshev distance of
-> **1 pixel** of `(floor(u), floor(v))`; and no pixel further than
-> `r + 1` px from any centre-line differs from the background.
+> `Σ_j coverage(|j + 0.5 − y₀|, r) == 2r == s · width`, for a horizontal
+> centre-line at any `y₀ ∈ ℝ`, and correspondingly for a vertical one.
 
-Why exactly ±1 and not tighter: a coverage rasterizer's 50 %-coverage
-contour *is* the geometric boundary, but it is only ever observed at pixel
-centres, which quantizes by up to half a pixel; the ramp itself spans a
-further half pixel. ±1 px is the honest sum, and it is the tolerance any
-correct implementation meets with room to spare. Why not looser: at the
-default `s = 600` px/unit, 1 px is 1/600 of an image unit — far below what
-any AC2 test could confuse with a real placement bug (a sign error, a
-missing y-flip, or a stretched aspect ratio all move ink by tens of pixels).
+Why it is exact and not merely close: as a function of the signed offset,
+`coverage(d, r) = clamp(r + 0.5 − d, 0, 1)` is the convolution of a box of
+width `2r` — the stroke's true cross-section — with a box of width `1`, the
+pixel. A unit-spaced sample sum of anything convolved with a unit box equals
+that thing's integral, because the unit box's Fourier transform vanishes at
+every non-zero integer frequency; and the integral of a box of width `2r` is
+`2r`. The `clamp` at `1` is what makes that plateau real, which is precisely
+why the identity needs `r ≥ 0.5`. Verified numerically over 1000 sub-pixel
+offsets at `r ∈ {0.5, 0.75, 1, 1.5, 2, 3, 6}` px: `max |Σcov − 2r| = 0`.
+
+**This — not "doubling the width doubles the lit width" — is the true
+statement of "width is honoured in image units".** The *lit extent* is
+`2r + 1` px, so `r: 1 → 2` takes a cross-section from 3 px to 5 px, not 3 to
+6. AC4 asserts the identity and the `2r + 1` extent; it must not assert
+proportional extent, which is false (§2.5, §6 AC4).
+
+**Bounded — where the ink lands on the grid: ±1 px, for `r ≥ 1` px.**
+
+> **Precondition: `r = s · width / 2 ≥ 1` px.** For every primitive vertex
+> mapping to pixel-space `(u, v)`, the frame then contains a pixel whose
+> coverage is ≥ 0.5 within a Chebyshev distance of **1 pixel** of
+> `(floor(u), floor(v))`; and no pixel further than `r + 1` px from any
+> centre-line differs from the background.
+
+**Why the precondition exists, in numbers.** Coverage is evaluated only at
+pixel centres, so the worst case for a vertex is one sitting exactly on a
+pixel corner: the nearest centre is then `√2/2 ≈ 0.7071` px away, and the
+best coverage available *anywhere* in the surrounding 3×3 block is
+`clamp(r + 0.5 − 0.7071, 0, 1)` — which is `0.2929` at `r = 0.5`, `0.0429`
+at `r = 0.25`, and `0.0` at `r = 0.1`. A ≥ 0.5 pixel therefore requires
+`r ≥ √2/2` for a **vertex** (a lone endpoint, or a `Point`), and `r ≥ 0.5`
+for a **segment interior** (a straight line's worst-case distance to the
+nearest pixel centre is 0.5, attained by an axis-aligned line on a pixel
+boundary, not `√2/2`). `r ≥ 1` px is the one memorable threshold that covers
+both with room to spare, and it is what R-0006 AC2 now words.
+
+That regime is not hypothetical: `Style::default().width = 0.01` at the
+golden's `s = 20` is `r = 0.1` px — a default stroke, lighting *no* pixel to
+0.5 anywhere. It is exactly why the golden fixture is deliberately
+fat-stroked (§3: `r ∈ [1.2, 3.0]` px) and why a 32×18 fixture was rejected:
+at `s = 10` the same widths give `r ∈ [0.6, 1.5]`, which puts the polyline
+(`0.8`) and the edges (`0.6`) below the threshold and the segment exactly on
+it — a fixture asserted outside the regime it demonstrates (§5).
+
+Why exactly ±1 px above the threshold and not tighter: the 50 %-coverage
+contour *is* the geometric boundary, but it is observed only at pixel
+centres, which quantizes by up to half a pixel, and the ramp itself spans a
+further half pixel. ±1 px is the honest sum. Why not looser: at the default
+`s = 600` px/unit, 1 px is 1/600 of an image unit — far below what any AC2
+test could confuse with a real placement bug (a sign error, a missing
+y-flip, or a stretched aspect ratio all move ink by tens of pixels).
 
 **Explicitly not claimed.**
 
+- *Nothing about sub-pixel strokes (`r < 1` px).* Two distinct failures live
+  there, both measured, both scoped out rather than papered over.
+  **Placement:** the ±1 px guarantee is simply false below `r ≈ 0.71` — a
+  vertex on a pixel corner peaks at `0.2929` coverage at `r = 0.5`, and at
+  `r = 0.1` lights nothing at all. **Ink:** below `r = 0.5` the ramp is a
+  cone with no plateau, its integral is `(r + 0.5)²` rather than `2r`, and
+  the rasterizer therefore **over-inks** a hairline — ~3× on average at
+  `r = 0.05` and up to **5.5× at the worst offset** (a single sample of
+  `0.55` where `2r = 0.1`). A sub-pixel stroke is drawn darker and wider than
+  SVG draws it. This is the standard behaviour of an unweighted
+  centre-sampled coverage rasterizer; the fixes (a conservative
+  minimum-width term, or true area sampling) would move every golden byte and
+  are not R-0006's business. A creator wanting a thin line at a small raster
+  size raises the width or the size — §2.10's disk-cost note is the same
+  trade-off from the other end.
 - *No pixel-level agreement with any SVG renderer.* Two SVG renderers do
   not agree with each other at stroke edges; a coverage rasterizer agrees
   with neither. AC2 is verified against the *mapped coordinates the SVG
@@ -445,7 +536,7 @@ Mirrors SPEC-0003 §2.9, with the two rows only a raster sink can have:
 | `PpmSink::new` / `with_view` | pixel buffer allocation fails | `ErrorKind::OutOfMemory` via `Vec::try_reserve` — never an abort (§6) |
 | `PpmSink::new` / `with_view` | dir creation fails | `io::Error` propagates (fail before rendering) |
 | `PpmSink::frame` | `File::create` / `write_all` fails | `io::Error` propagates; ≤ 1 partial file, no cleanup |
-| `PpmSink::frame` | style contract violated (NaN/≤0 width or alpha) | that primitive paints nothing; frame stays valid and deterministic |
+| `PpmSink::frame` | style contract violated (width NaN, infinite or ≤ 0; alpha NaN) | that primitive paints nothing; frame stays valid and deterministic (§2.5's guard, §3's spelling) |
 | `PpmSink::frame` | non-finite coordinate (contract-breaking) | `debug_assert` tripwire; in release that segment is skipped so tile bounds stay sane |
 | `Scene::render` | bad fps / bad duration / sink error | unchanged — SPEC-0003 §2.9 |
 
@@ -503,13 +594,30 @@ ffmpeg -framerate 60 -i out/ppm/frame_%05d.ppm -c:v libx264 -pix_fmt yuv420p fir
    `libx264` in the output. If absent, print
    `SKIP: this ffmpeg has no libx264 encoder` and `return`. A creator's
    ffmpeg packaging is not a motoreel regression.
-3. **Otherwise assert.** Render a small sequence into
-   `CARGO_TARGET_TMPDIR` — 320×180, `duration 0.25` at 60 fps → exactly
-   **15** frames (0.25 is dyadic, so `0.25 · 60 = 15.0` exactly and the
-   frame count is not a rounding accident) — run the documented command
-   shape against them, and assert the exit status is success and the mp4
-   is non-empty. **A present ffmpeg that refuses our frames is a real
-   failure and fails the test:** that is the whole point of R-0006.
+3. **Otherwise assert.** Render a small sequence into a **freshly cleaned**
+   directory under `CARGO_TARGET_TMPDIR` (`remove_dir_all`, ignoring
+   `NotFound`, before constructing the sink) — 320×180, `duration 0.25` at
+   60 fps → exactly **15** frames (0.25 is dyadic, so `0.25 · 60 = 15.0`
+   exactly and the frame count is not a rounding accident). The clean is
+   load-bearing, not tidiness: §2.1's directory policy truncates but never
+   deletes, so a stale higher-numbered frame from an earlier run would
+   silently join the encode and make the second run of the test differ from
+   the first. Then run the documented command shape against them and assert
+   the exit status is success, the mp4 is non-empty, and **its bytes `4..8`
+   are `b"ftyp"`** — the ISO-BMFF box type every mp4 begins with, four
+   bytes that catch an ffmpeg exiting 0 having written garbage (§5). **A
+   present ffmpeg that refuses our frames is a real failure and fails the
+   test:** that is the whole point of R-0006.
+
+   **The test's invocation adds `-y -nostdin`; the documented creator
+   command deliberately does not.** ffmpeg prompts `File ... already exists.
+   Overwrite?` when the output is present and reads the answer from stdin,
+   which under `cargo test` is not a tty and may be closed or shared — so
+   without the flags the encode can hang, or fail for a reason that has
+   nothing to do with our frames. Both flags are test-harness hygiene rather
+   than part of the claim: a creator running the command by hand *wants* the
+   prompt, and inserting the flags into the documented string would also
+   break AC6's literal-substring assertion against `main.rs`.
 
 Both probes can only ever cause a *skip*, never a false pass and never a
 false failure — which is the argument for `which` over a more portable
@@ -528,23 +636,60 @@ stays exactly `["garust"]`, `[dev-dependencies]` exactly `["proptest"]`, no
 `[build-dependencies]`, no target-specific `.dependencies]` table. The
 rasterizer is ~150 lines of `std` arithmetic.
 
-**One repo-hygiene item this spec does add:** a `.gitattributes` entry
-marking the binary fixture, since the repo has none today:
+**One repo-hygiene item this spec does add:** a `.gitattributes` covering
+both golden fixtures, because an `eol`/`autocrlf` setting would silently
+corrupt a byte-exact file — a failure that would look like a rasterizer
+bug on someone else's clone.
 
 ```
 crates/motoreel/tests/golden/*.ppm binary
+crates/motoreel/tests/golden/*.svg -text
 ```
+
+**Why two rules rather than one `** binary`.** `binary` implies both
+`-text` and `-diff`. The `-text` half is what protects byte-exactness and
+both fixtures need it. The `-diff` half suppresses textual diffs, which
+is right for the PPM (a binary blob, unreviewable by eye — hence the
+failure reporter in §2.11) and *wrong* for the SVG: SPEC-0003 §1 chose
+SVG first precisely because its frames are "pure text, diffable in
+review", and marking it `binary` would take that back to buy nothing.
 
 Without it, a future `core.autocrlf` or an eol setting could rewrite the
 `\n` bytes in the P6 header — or worse, bytes in the body that happen to be
 `0x0D 0x0A` — and silently corrupt a byte-exact fixture. This is not
 optional polish; it is the checked-in golden's integrity.
 
+**The pattern is the whole directory, not `*.ppm`.** R-0003's
+`tests/golden/frame_00000.svg` is a byte-exact fixture too, and it is
+unprotected today — a *text* fixture is more exposed to an eol rewrite than
+a binary one, not less, and R-0003's golden bytes are asserted with the same
+`==` this spec's are. One glob covers both, covers R-0007's text golden and
+font specimen before they exist, and cannot be forgotten by whoever adds the
+next fixture. The cost, stated: `binary` implies `-diff`, so `git diff`
+reports the SVG golden as "Binary files differ" instead of a text diff.
+Accepted — a golden is reviewed through its bless regeneration and the
+test's own reporter (§6 AC3), never by eyeballing a diff hunk; and this
+changes no byte of any fixture, so R-0003's AC3 test must still pass
+untouched, which is the cheapest proof the entry is inert.
+
 ### 2.12 R-0007 touchpoints — room left, nothing designed
 
 R-0007 adds anchored labels: a `Prim2::Text`-like record that `PpmSink`
-must rasterize from an embedded bitmap font (R-0007 AC6). What this design
-deliberately leaves in place for it, **without designing any of it**:
+must rasterize from an embedded bitmap font (R-0007 AC6).
+
+**Sequencing, normatively: R-0006 must be `Met` before R-0007
+implementation begins.** SPEC-0007 does not merely follow this spec, it
+*consumes* it — `to_pixel`, `src_over`, `unit`, `Tile` and `Canvas` are all
+named in its dependency and module lists as things it calls or amends.
+Starting R-0007 against an unsigned-off rasterizer means either duplicating
+those five items or absorbing a correction to them mid-requirement, and
+every §2.8 claim R-0007 inherits would be inherited from an unverified
+source. The gate is the ordinary one — R-0006 QA sign-off and merge, then
+R-0007 step 5 (constitution §4) — and it is written here because this is the
+file R-0007's author reads.
+
+What this design deliberately leaves in place for it, **without designing
+any of it**:
 
 - **The compositing half is already general.** `src_over` and the
   coverage → alpha rule take a coverage value, not a geometry: a glyph
@@ -569,8 +714,10 @@ deliberately leaves in place for it, **without designing any of it**:
   "no transcendental, no accumulation" claim survives intact and R-0007's
   AC7 inherits it rather than re-deriving it.
 - **The fixture scheme extends.** A text golden is one more small PPM under
-  `tests/golden/`, covered by the same bless command, the same
-  `.gitattributes` line, and the same byte-diff reporter (§6 AC3).
+  `tests/golden/`, covered by the same bless command, the same byte-diff
+  reporter (§6 AC3), and the same `.gitattributes` glob — §2.11 marks the
+  whole directory, so a new fixture needs no new line and cannot be
+  forgotten.
 - **The module split is the pressure valve.** If R-0007's glyph code makes
   `ppm.rs` unwieldy, extracting `raster.rs` (the `Canvas`, `src_over`,
   `coverage`, `distance_to_segment`) is a mechanical, additive move with no
@@ -581,6 +728,50 @@ Not designed here, and left entirely to SPEC-0007: the glyph format and
 font table, baseline/advance/alignment rules, the non-ASCII fallback
 (R-0007 AC8), how `Prim2` gains the variant, and the documented fact that
 the two sinks are *not* pixel-identical for text (R-0007 §4).
+
+### 2.13 Amending SPEC-0003 §2.5 — the absent `preserveAspectRatio` is normative
+
+§2.3's mapping is composed from three pieces of `SvgSink`'s output, and only
+two of them are written down in SPEC-0003 §2.5's pinned file shape: the
+`<g transform="scale(1 -1)">` line and the `viewBox` attribute. The third is
+written down nowhere, because it is an attribute `SvgSink` **does not emit** —
+`preserveAspectRatio`, whose SVG default is `xMidYMid meet`. The whole
+`s = min(W/vw, H/vh)` derivation, and with it AC2 for every non-16:9
+`with_view` pair, rests on that default.
+
+SPEC-0003 never pinned it, and nothing it defines could notice its loss: a
+future edit adding `preserveAspectRatio="none"` to the header would leave the
+SVG well-formed, the golden would be re-blessed as a matter of course, and the
+two sinks would silently stop agreeing — the SVG stretching where `PpmSink`
+letterboxes. An invariant no test can see is not an invariant. This spec
+closes the hole in the shape SPEC-0007 §2.6 uses to amend the same section,
+which SPEC-0004 §2.3 established.
+
+**The amendment (normative).** SPEC-0003 §2.5's "File shape (exact bytes, in
+order)" gains this clause:
+
+> The `<svg>` element carries exactly the attributes shown — `xmlns`,
+> `width`, `height`, `viewBox` — and **no `preserveAspectRatio` attribute**.
+> Its absence is normative rather than incidental: the default
+> `xMidYMid meet` is the uniform-scale-and-centre rule that `PpmSink`
+> reproduces as `s = min(W/vw, H/vh)` (SPEC-0006 §2.3), so emitting the
+> attribute with *any* value — including a redundant `"xMidYMid meet"` —
+> changes the byte shape of every frame and moves R-0003's golden. Changing
+> the letterbox behaviour means amending this clause and SPEC-0006 §2.3
+> together, never one of them.
+
+**What changes concretely: nothing.** Not a line of `svg.rs`, not a byte of
+R-0003's golden fixture. The amendment records a property the code already
+has and adds the test that keeps it — the cheapest kind of amendment, and the
+same "additive, byte-unchanged" argument SPEC-0004 §2.3 made for `Edges` and
+SPEC-0007 §2.7 makes for `<text>`.
+
+**What asserts it:** R-0006 AC2(e) (§6), by reading the header `SvgSink`
+writes and asserting the substring `preserveAspectRatio` does **not** occur.
+The assertion lives with R-0006 rather than being retrofitted into R-0003's
+suite because R-0006 is what depends on it: a test should fail in the
+requirement whose claim it breaks, and R-0003's own tests stay untouched
+(§4).
 
 ## 3. Code outline
 
@@ -659,8 +850,12 @@ impl Canvas {
         let radius = 0.5 * self.scale * style.width;
         let alpha = unit(style.alpha);
         // `stroke-width="0"` paints nothing in SVG, and must here too:
-        // without this the ramp would paint a phantom 50 % hairline.
-        if !(radius > 0.0) || alpha == 0.0 {
+        // without this the ramp would paint a phantom 50 % hairline. The
+        // `is_finite()` half rejects NaN *and* an infinite radius, which
+        // would make `pad` infinite and the tile the whole canvas. Spelled
+        // as a negated conjunction, not `!(radius > 0.0)` — see the clippy
+        // note under this block (§2.5, §2.9).
+        if !(radius.is_finite() && radius > 0.0) || alpha == 0.0 {
             return;
         }
 
@@ -749,16 +944,17 @@ fn finite(p: Px) -> bool {
 }
 
 /// Total clamp to `[0, 1]`; NaN maps to 0, so a style violating its
-/// documented contract paints nothing rather than poisoning the frame.
+/// documented contract paints nothing rather than poisoning the frame
+/// (§2.5). **Not `x.clamp(0.0, 1.0)`** — `f64::clamp` returns NaN for NaN.
+/// The comparison order is what routes NaN to the final `else`; see the
+/// clippy note below before changing it.
 fn unit(x: f64) -> f64 {
-    if x.is_nan() {
-        0.0
-    } else if x < 0.0 {
-        0.0
-    } else if x > 1.0 {
+    if x > 1.0 {
         1.0
-    } else {
+    } else if x > 0.0 {
         x
+    } else {
+        0.0
     }
 }
 
@@ -775,6 +971,32 @@ impl Tile {
 }
 ```
 
+**Two spellings above are pinned against the merge gate**
+(`cargo clippy --workspace --all-targets -- -D warnings`,
+`project-specifics.md`), and both resist the "obvious" simplification. This
+paragraph exists so the next reader does not quietly put them back.
+
+- **`unit` is `> 1.0` / `> 0.0` / `else`.** The natural `is_nan()`-first
+  spelling trips **two** lints at once: `clippy::if_same_then_else` (its first
+  two arms both return `0.0`) and `clippy::manual_clamp`. The second lint's
+  suggested fix, `x.clamp(0.0, 1.0)`, is **semantically wrong here**:
+  `f64::clamp` returns NaN for a NaN input, so taking it would let a NaN alpha
+  reach `src_over` and paint a tile of garbage — deleting §2.5's "a NaN width
+  or alpha paints nothing" without changing a line of the spec. The form above
+  is clippy-clean *and* NaN-correct: NaN fails both `>` tests and falls to
+  `0.0`. (`distance_to_segment`'s `t.clamp(0.0, 1.0)` is *not* the same case
+  and stays: `len2 > 0.0` is checked and both operands are finite, so `t`
+  cannot be NaN there.)
+- **The width guard is `!(radius.is_finite() && radius > 0.0)`.** The shorter
+  `!(radius > 0.0)` trips `clippy::neg_cmp_op_on_partial_ord`, and rewriting
+  it as `radius <= 0.0` would be wrong for NaN. The longer form is also the
+  *stronger* guard, independently of any lint: an infinite radius passes
+  `> 0.0`, then makes `pad = radius + 0.5` infinite and the tile the entire
+  canvas (§2.5, §2.9).
+
+Neither is a style preference; both are load-bearing, and a lint will report
+neither if they are "tidied" away.
+
 **The golden fixture (AC3), illustrative — exact bytes are frozen at
 implementation via the bless path and reviewed as a decoded diff.** A
 64×36 canvas over the *default* 3.2 × 1.8 view, so `s = 20` px per image
@@ -784,14 +1006,19 @@ SPEC-0003 §2.6's construction rules — `Scene::new(1.0)`'s default
 orthographic camera at `translator(0, 0, 5)`, single-key tracks, every
 vertex in `z = 0` — rendered by `scene.render(1.0, &mut sink)` (one frame,
 `t = 0`), and is deliberately fat-stroked so a 64×36 fixture still
-exercises interiors, fringes, caps, joins and alpha:
+exercises interiors, fringes, caps, joins and alpha. **The strokes are fat
+for a second reason:** at `s = 20` the four widths give
+`r ∈ {2.0, 3.0, 1.6, 1.2}` px, every one of them above §2.8's `r ≥ 1` px
+threshold — so the fixture is asserted inside the regime whose tolerance it
+is meant to demonstrate, and a later thinning of any width would move it out
+(§5):
 
 | object | geometry (image space) | style | what it pins |
 |---|---|---|---|
 | segment | `(−1, 0) → (1, 0)` | white, `width 0.2` | `r = 2` px, centre-line on the pixel boundary `y = 18.0` → rows 16–19 exactly `255`, rows 15 and 20 exactly `0` (§2.5) |
 | point | `(0.5, 0.5)` | orange `#ff4d00`, `width 0.3` | a `r = 3` px disc at pixel `(42, 8)` — the round-cap path and its fringe |
 | polyline | `(−0.5,−0.5) → (0.5,−0.5) → (0, 0.25) → (−0.5,−0.5)` | teal `#00b4d8`, `width 0.16`, `alpha 0.5` | round joins, and src-over of a translucent layer over *both* background and the white segment |
-| edges | two disjoint pairs near the top corners | white, `width 0.12` | the fourth variant, and per-segment tiles that do not touch |
+| edges | two pairs near the top corners: `(−1.3, 0.7) → (−1.0, 0.7)` and `(1.0, 0.7) → (1.3, 0.7)` | white, `width 0.12` | the fourth variant. `r = 1.2` px; both centre-lines land on the pixel boundary `y = 4.0` (px `6..12` and `52..58`), so rows 3 and 4 are `255` between the caps and rows 2 and 5 carry a `0.2` fringe = byte **51**. Their padded tiles are x ∈ [4, 14) and [50, 60) — disjoint, which is what exercises per-segment tiling |
 
 ## 4. Non-goals
 
@@ -810,37 +1037,50 @@ exercises interiors, fringes, caps, joins and alpha:
   single-evaluation ramp is the pinned rule (§2.5).
 - No parallel frame or scanline rendering, no SIMD — determinism first;
   throughput is R-0011.
-- No frame-directory cleanup, no evenness enforcement on raster size (an
-  encoder constraint, documented on the command, not a format one).
+- No frame-directory cleanup **by the sink**, and no evenness enforcement on
+  raster size (an encoder constraint, documented on the command, not a format
+  one). §2.10's AC6 test cleans its own scratch directory before rendering;
+  that is harness hygiene, not sink behaviour, and the sink's truncate-never-
+  delete policy is unchanged.
 - No changes to `sink.rs`, `scene.rs`, `prim.rs`, `camera.rs`, `svg.rs`, or
   `examples/first_light/scene.rs`; R-0003's golden fixture and its bytes are
-  untouched, which is the cheapest proof this spec is additive.
+  untouched, which is the cheapest proof this spec is additive. §2.13's
+  amendment to SPEC-0003 §2.5 is **textual**: it pins a property `svg.rs`
+  already has — an attribute it does not emit — and adds no byte anywhere.
 
 ## 5. Open questions
 
-Recorded for architect adjudication; each carries a recommendation, in the
-house pattern (architect-recommended → owner acceptance).
+None — the architect review of 2026-08-27 adjudicated all four held open
+here. Each is recorded in the decision log as architect-adjudicated, owner
+acceptance pending.
 
-- **Golden fixture size.** 64×36 (6 925 B) is recommended over 32×18
-  (1 741 B): at `s = 20` the geometry above still shows real interiors and
-  fringes, while at `s = 10` every stroke is sub-pixel and the fixture
-  stops testing anti-aliasing. A binary blob is unreviewable by eye either
-  way, which §6 AC3 answers with a decoded byte-diff reporter rather than
-  with size.
-- **Where the PPM demo lives.** Recommended: amend
-  `examples/first_light/main.rs` to render both sinks (§2.10) — the broken
-  command is documented there, so the fix belongs there, and `scene.rs`
-  stays a single shared source. The alternative, a new
-  `examples/first_light_ppm/`, duplicates `main.rs` for nothing.
-- **Default background.** Recommended: `Rgb::BLACK`, matching what an
-  encoded transparent SVG looks like today, with `with_background` for
-  anything else. A white default would be friendlier for print-style
-  diagrams but would make the two sinks look different out of the box.
-- **Should AC6 also assert the output stream is h264 (via `ffprobe`)?**
-  Recommended: no. It adds a second external tool and a third skip axis to
-  prove something `-c:v libx264` already states; the failure R-0006 exists
-  to catch is a *decode* failure, which a non-zero ffmpeg exit already
-  reports.
+- **Golden fixture size → 64×36** (6 925 B), as recommended, and now for a
+  sharper reason than "it shows more". At `s = 20` the fat strokes give
+  `r ∈ [1.2, 3.0]` px, every one above §2.8's `r ≥ 1` px threshold, so the
+  fixture sits *inside* the regime whose tolerance AC2 asserts. A 32×18
+  fixture (`s = 10`) halves every radius to `r ∈ [0.6, 1.5]`: the polyline
+  (`0.8`) and the edges (`0.6`) drop below the threshold and the segment
+  lands exactly on it — a fixture demonstrating a guarantee it does not
+  meet. Reviewability is answered by §6 AC3's decoded byte-diff reporter,
+  not by size.
+- **Where the PPM demo lives → amend `examples/first_light/main.rs`**, not a
+  new example. The broken command is documented there, so the fix belongs
+  there; `scene.rs` stays a single shared source; and R-0003 AC5's literal
+  SVG command string stays intact in the same file, untouched (§2.10). A new
+  `examples/first_light_ppm/` would duplicate `main.rs` for nothing.
+- **Default background → `Rgb::BLACK`, with a consuming `with_background`
+  builder** (§2.1). It reproduces what an encoded transparent SVG looks like
+  today, keeping the two sinks visually interchangeable out of the box; the
+  builder matches `Object::with_style` rather than adding a fourth
+  constructor. A white default would be friendlier for print-style diagrams
+  and is one call away.
+- **AC6 and `ffprobe` → no ffprobe; assert the container magic instead.** A
+  second external tool would add a third skip axis to prove something
+  `-c:v libx264` already states. In its place AC6 asserts the output's bytes
+  `4..8` are `b"ftyp"` — the ISO-BMFF box type every mp4 opens with — which
+  catches the one failure a zero exit status does not: ffmpeg succeeding and
+  writing garbage. Four bytes of assertion, no new tooling, no new skip axis
+  (§2.10).
 
 ## 6. Acceptance criteria
 
@@ -867,9 +1107,15 @@ mapping, coverage rule and distance function in `ppm.rs`'s own
   both sinks: coordinates parsed out of the SVG by splitting on `'"'` (the
   template is pinned — no XML parser, SPEC-0003 precedent), mapped by the
   §2.3 formula, and asserted to have stroke-coloured ink within **±1 px**
-  (§2.8), with background preserved far from every centre-line. (d) The
-  letterboxed case leaves background bands where SVG's `meet` letterboxes,
-  proving `min` and not two scales.
+  (§2.8), with background preserved far from every centre-line. **Every
+  primitive in this AC2 slice is stroked at `r ≥ 1` px — §2.8's precondition
+  — and the assertion states the radius it relies on**, so a later thinning
+  of the slice fails loudly instead of quietly invalidating the claim; the
+  sub-pixel regime is explicitly not asserted here (it is pinned in AC4).
+  (d) The letterboxed case leaves background bands where SVG's `meet`
+  letterboxes, proving `min` and not two scales. (e) The header `SvgSink`
+  writes contains **no** `preserveAspectRatio` substring — §2.13's amendment
+  to SPEC-0003 §2.5, asserted in the requirement that depends on it.
 - [ ] **AC3 — determinism.** Two renders of the same scene in one process
   into `CARGO_TARGET_TMPDIR/{a,b}` produce byte-identical files pairwise
   and the expected file list. The §3 trig-free golden scene at 64×36 equals
@@ -879,15 +1125,31 @@ mapping, coverage rule and distance function in `ppm.rs`'s own
   `(x, y, channel)` with both values** — a binary golden must fail legibly.
   Regeneration only via
   `MOTOREEL_BLESS=1 cargo test -p motoreel --test r0006_ppm_sink`, reviewed
-  like code. `.gitattributes` marks `tests/golden/*.ppm binary` (§2.11).
+  like code. `.gitattributes` marks `crates/motoreel/tests/golden/*.ppm binary
+crates/motoreel/tests/golden/*.svg -text`,
+  covering R-0003's existing SVG fixture as well as this one (§2.11).
 - [ ] **AC4 — anti-aliasing and width.** The §2.5 worked numbers, asserted
   exactly: a `r = 1` px stroke on a pixel boundary lights exactly two rows
   at `255` with no fringe; shifted half a pixel it lights one row at `255`
   and two at exactly `128`. A `r = 2` px stroke lights exactly four full
-  rows. Stroke width is honoured in image units: doubling `Style::width`
-  doubles the lit width, and a width of `w` image units at scale `s`
-  produces `s·w` px of ink. `width = 0`, negative, or NaN paints nothing
-  (as SVG). A white stroke at `alpha = 0.5` over black at full coverage is
+  rows. **Width is honoured in image units by §2.8's identity, asserted at
+  the layer that owns it:** in `ppm.rs`'s unit tests, where `coverage`
+  returns `f64`, `Σ_j coverage(|j + 0.5 − y₀|, r) == 2r == s · width` is
+  compared with `==` — no tolerance — sweeping `y₀` across a whole pixel at
+  `r ∈ {0.5, 0.75, 1, 1.5, 2, 3, 6}` px. The frame-level counterpart reads
+  the same cross-section out of a white-on-black frame, where the per-channel
+  `round` costs up to half a byte per pixel, so it asserts
+  `|Σ(byte / 255) − s·width| ≤ n / 510` for an `n`-pixel cross-section:
+  **which layer carries the exact claim is part of the claim**, and a
+  frame-level `==` would be false precision. **The lit extent is asserted as
+  `2r + 1` px** (`r = 1` → 3 px, `r = 2` → 5 px); the tempting "doubling the
+  width doubles the lit width" is *false* and must not be written (§2.8).
+  One assertion pins the documented sub-pixel regime the other way — at
+  `r = 0.05` the summed coverage **exceeds** `2r` (up to 5.5× at the worst
+  offset) — so the over-ink stays documented behaviour rather than becoming a
+  later surprise. `width = 0`, negative or NaN paints nothing — as SVG draws
+  nothing for `stroke-width="0"` — and so does an infinite width, by §2.5's
+  guard. A white stroke at `alpha = 0.5` over black at full coverage is
   exactly `128`. A polyline's joint shows **no** darker seam — the
   union-by-max property, asserted by comparing the joint pixel against the
   interior of either arm.
@@ -903,11 +1165,19 @@ mapping, coverage rule and distance function in `ppm.rs`'s own
 - [ ] **AC6 — end to end with stock ffmpeg.** The two probes skip with a
   printed note (`which ffmpeg`; then `ffmpeg -hide_banner -encoders`
   containing `libx264`); otherwise 15 frames at 320×180 (`0.25 s × 60 fps`,
-  dyadic) are encoded by the documented command shape, the exit status must
-  be success and the mp4 non-empty. Separately (and unconditionally, no
-  ffmpeg required) `examples/first_light/main.rs` must contain the literal
+  dyadic) are rendered into a **freshly cleaned** directory (§2.1 truncates
+  but never deletes, so a stale frame would otherwise join the encode) and
+  passed to the documented command shape **plus `-y -nostdin`** — harness
+  hygiene, because ffmpeg otherwise prompts on an existing output and reads
+  the answer from a stdin `cargo test` does not provide, hanging or failing
+  for a reason unrelated to our frames (§2.10). The exit status must be
+  success, the mp4 non-empty, and its bytes `4..8` exactly `b"ftyp"` — the
+  ISO-BMFF box type, which is what catches an ffmpeg that exits 0 having
+  written garbage. Separately (and unconditionally, no ffmpeg required)
+  `examples/first_light/main.rs` must contain the literal
   `ffmpeg -framerate 60 -i out/ppm/frame_%05d.ppm` — the R-0003 AC5
-  precedent — and R-0003's own SVG line must still be present, unchanged.
+  precedent, and the reason the *documented* command carries no `-y`
+  or `-nostdin` — and R-0003's own SVG line must still be present, unchanged.
 - [ ] **AC7 — zero new dependencies.** `[dependencies]` is exactly
   `["garust"]`, `[dev-dependencies]` exactly `["proptest"]`, no
   `[build-dependencies]` and no target-specific dependency table — the
@@ -939,7 +1209,25 @@ mapping, coverage rule and distance function in `ppm.rs`'s own
 | 2026-08-27 | Golden fixture 64×36 over the default view (`s = 20` exactly), fat-stroked, trig-free; failures report the first differing byte as `(x, y, channel)` | A binary golden must still fail legibly; SPEC-0003 §2.6's construction rules keep the bytes platform-portable, and fat strokes keep a tiny fixture meaningful (§3, §6 AC3) |
 | 2026-08-27 | Add `.gitattributes` with `crates/motoreel/tests/golden/*.ppm binary` | The repo has no `.gitattributes`; an eol/autocrlf setting could rewrite `\n` bytes in the P6 header or body and silently corrupt a byte-exact fixture (§2.11) |
 | 2026-08-27 | A `Polyline` of fewer than two points, and an empty `Edges`, paint nothing — falling out of `windows(2)` with no branch | Matches the dominant SVG behaviour for a lone `moveto` and SPEC-0004's `d=""`; renderers disagree here, so the behaviour is pinned and the divergence documented rather than papered over (§2.4, §2.8) |
+| 2026-08-27 | **AC2's ±1 px tolerance is scoped to `r ≥ 1` px** (architect review S6-1); sub-pixel placement moves to §2.8's "explicitly not claimed" | The guarantee is measurably false for thin strokes: a vertex on a pixel corner is `√2/2 ≈ 0.7071` px from the nearest centre, so the best coverage anywhere in the 3×3 block is `0.2929` at `r = 0.5`, `0.0429` at `r = 0.25`, `0.0` at `r = 0.1`. A ≥ 0.5 pixel needs `r ≥ √2/2` at a vertex and `r ≥ 0.5` in a segment interior; `r ≥ 1` covers both. `Style::default().width = 0.01` at the golden's `s = 20` is `r = 0.1` px, so this is a regime real callers reach (§2.8) |
+| 2026-08-27 | **AC4 is restated as the exact identity `Σ coverage == s · width` for `r ≥ 0.5`**, replacing "doubling the width doubles the lit width" (architect review S6-2) | The doubling claim is false — lit extent is `2r + 1` px, so `r: 1 → 2` gives 3 px → 5 px, not 6 — and a test written against it would fail on a correct rasterizer. The ramp is a box-of-`2r` convolved with a box-of-`1`, so its unit-spaced sample sum equals `2r` *bit-exactly at every sub-pixel offset* (architect: `max |Σcov − 2r| = 0` over 1000 offsets at `r ∈ {0.5, 0.75, 1, 1.5, 2, 3, 6}`). Below `r = 0.5` the plateau vanishes and the sink over-inks — up to 5.5× at `r = 0.05` — documented, not claimed (§2.5, §2.8, §6 AC4) |
+| 2026-08-27 | `unit` is spelled `> 1.0` / `> 0.0` / `else`, and the width guard `!(radius.is_finite() && radius > 0.0)` (architect review S6-3) | The outline as written failed the merge gate: the `is_nan()`-first `unit` trips `clippy::if_same_then_else` *and* `clippy::manual_clamp`, whose fix `x.clamp(0.0, 1.0)` returns **NaN for NaN** and would destroy §2.5's "a NaN width or alpha paints nothing"; `!(radius > 0.0)` trips `clippy::neg_cmp_op_on_partial_ord`. Both replacements are clippy-clean, and the guard is independently stronger — an infinite radius would make `pad` infinite and paint the whole canvas. Recorded in §3 so neither is "simplified" back (§2.5, §3) |
+| 2026-08-27 | **SPEC-0003 §2.5 is amended: the absent `preserveAspectRatio` attribute is normative, and AC2 asserts its absence** (architect review S6-4) | §2.3's whole `s = min(W/vw, H/vh)` derivation rests on SVG's default `xMidYMid meet`, which SPEC-0003 never pinned and no existing test could see: adding `preserveAspectRatio="none"` would keep the SVG well-formed, get the golden re-blessed, and silently break sink agreement on every non-16:9 view. The amendment changes no code and no fixture byte — the shape SPEC-0004 §2.3 and SPEC-0007 §2.6 established (§2.13) |
+| 2026-08-27 | The golden fixture's `Edges` row is given exact coordinates — `(−1.3, 0.7) → (−1.0, 0.7)` and `(1.0, 0.7) → (1.3, 0.7)` (architect review S6-5) | "Two disjoint pairs near the top corners" is not reproducible from the spec; a fixture that can only be recovered by blessing is a fixture nobody can check. The stated pair also makes its own expectations hand-checkable — `r = 1.2` px on the boundary `y = 4.0` → rows 3 and 4 at `255`, rows 2 and 5 at byte 51, tiles x ∈ [4, 14) and [50, 60) (§3) |
+| 2026-08-27 | `.gitattributes` widened from `tests/golden/*.ppm binary` to `crates/motoreel/tests/golden/*.ppm binary
+crates/motoreel/tests/golden/*.svg -text` (architect review S6-6) | R-0003's `frame_00000.svg` is a byte-exact fixture too and is unprotected today — a text fixture is *more* exposed to an eol rewrite, not less. One glob covers it, covers R-0007's fixtures before they exist, and cannot be forgotten by the next author. Cost accepted: `binary` implies `-diff`, so the SVG golden stops showing a text diff; goldens are reviewed through bless regeneration and §6 AC3's reporter anyway (§2.11) |
+| 2026-08-27 | The AC6 encode test adds `-y -nostdin` and renders into a freshly cleaned directory; the **documented creator command stays exactly as published** (architect review S6-7) | ffmpeg prompts to overwrite an existing output and reads the answer from stdin, which `cargo test` does not give it — the test would hang or fail for a reason unrelated to our frames. §2.1's truncate-never-delete policy makes the clean equally load-bearing on a second run. The documented string keeps neither flag: a creator wants the prompt, and inserting flags would break AC6's literal-substring assertion against `main.rs` (§2.10, §6 AC6) |
+| 2026-08-27 | The raster stage's bit-portability claim gains its precondition: targets whose `f64` arithmetic is IEEE double (architect review S6-8) | x87-only targets (`i586-*`, no SSE2) compute in 80-bit registers and double-round on spill, which can move a last-ulp result and a golden byte. `x86_64` and `aarch64` — everything this project builds for — are IEEE double, so the claim stands as written, but unqualified it was an overstatement (§2.7) |
+| 2026-08-27 | §2.0's module rule narrowed from "a second module for a single caller" to "a module per single *abstraction*" (architect review C-3) | As written it read as forbidding SPEC-0007's `font.rs`, which holds *data* (a `const` bitmap table), not an abstraction. The rule is about premature abstraction, not line counts, and should not be quotable against a module whose only sin is having one reader (§2.0) |
+| 2026-08-27 | **R-0006 must reach `Met` before R-0007 implementation begins** (architect review C-2) | SPEC-0007 consumes `to_pixel`, `src_over`, `unit`, `Tile` and `Canvas` directly. Building on an unsigned-off rasterizer means duplicating them or absorbing a correction mid-requirement, and every §2.8 claim R-0007 inherits would come from an unverified source (§2.12) |
+| 2026-08-27 | §5's four open questions adjudicated as recommended: 64×36 golden, amend `first_light/main.rs`, `Rgb::BLACK` default with `with_background`, no `ffprobe` | Architect adjudication, owner acceptance pending. The golden's size gains a second reason: at `s = 20` its radii are `r ∈ [1.2, 3.0]` px, inside §2.8's `r ≥ 1` px regime, whereas a 32×18 fixture (`s = 10`) gives `r ∈ [0.6, 1.5]` — two of its four objects below the tolerance it is meant to demonstrate and a third exactly on it (§5) |
+| 2026-08-27 | AC6 asserts the encoded mp4's bytes `4..8` are `b"ftyp"`, in place of an `ffprobe` stream check | The ISO-BMFF box type is four bytes of assertion with no new tool and no third skip axis, and it catches the one failure a zero exit status misses: ffmpeg succeeding and writing garbage (§2.10, §5) |
 
 ## Changelog
 
 - 2026-08-27 — created.
+- 2026-08-27 — architect review (REQUEST CHANGES) applied: S6-1 through S6-8,
+  C-2 and C-3. §2.8 rewritten around the `r ≥ 1` px precondition and the
+  exact `Σ coverage == s · width` identity; §2.13 added, amending SPEC-0003
+  §2.5; §5's four open questions adjudicated and closed. History is appended
+  to, not rewritten.
