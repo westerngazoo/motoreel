@@ -17,7 +17,9 @@ quantity, or a moving body. An anchor is one of:
 - a **world point** — the label tracks that point through the camera;
 - a **body's pose** — the label rides an object's track with an offset,
   so it follows a moving thing;
-- a **screen corner** — for titles and captions that must not move.
+- a **fixed screen position** — one of a 3×3 grid of image-space anchor
+  points (corners, edge midpoints, and centre) — for titles and captions
+  that must not move.
 
 Labels are projected, culled, and emitted like any other primitive, and
 render in **both** sinks.
@@ -41,8 +43,12 @@ scope below keeps it from becoming a typesetting project.
 - **AC3.** A pose-anchored label follows its object's track: at any `t`
   its position equals the object's pose applied to the anchor point,
   then projected — asserted against an independently computed position.
-- **AC4.** A corner-anchored label sits at a fixed image-space position
-  regardless of camera or time.
+- **AC4.** A screen-anchored label sits at a fixed image-space position
+  regardless of camera or time, selectable from a **3×3 grid**:
+  `TopLeft · TopCentre · TopRight · MidLeft · Centre · MidRight ·
+  BottomLeft · BottomCentre · BottomRight`. Corrected from a first draft
+  that offered corners only — which left no way to centre a title, the
+  most common thing an explainer needs (found in SPEC-0007 review).
 - **AC5.** `SvgSink` emits one pinned `<text>` element per label, with
   the byte-determinism rules of R-0003 (fixed attribute order, default
   float `Display`, no value-dependent branching), and the existing
@@ -77,6 +83,7 @@ None — scope settled with the owner on 2026-08-27.
 | 2026-08-27 | Text is in scope, reversing a documented non-goal | The project has an audience now; an explainer must be able to name what it shows (owner) |
 | 2026-08-27 | Plain strings, anchored to geometry — no markup, no LaTeX | Covers axis names, quantities and callouts, which is the whole ask; a typesetting engine is a different project (owner) |
 | 2026-08-27 | Three anchor kinds: world point, body pose, screen corner | The pose anchor is the one that makes labels *ride* moving objects — the capability an explainer actually needs (owner) |
+| 2026-08-27 | Screen anchors are a 3×3 grid, not four corners | The first draft made a centred title impossible — an obvious miss for an explainer, surfaced by the SPEC-0007 draft. Additive fix; the corners are four of the nine |
 | 2026-08-27 | Sinks may differ in glyph rendering, and say so | The raster sink needs an embedded face; the SVG sink should use real fonts. Pretending they match would be the dishonest option (owner) |
 
 ## Changelog
