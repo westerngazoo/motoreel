@@ -80,13 +80,11 @@ impl Scene {
         // Phase 2 — labels, after every object (R-0007 §2.1). Phase 1 above
         // is byte-for-byte what it was; nothing in it was reordered.
         for label in &self.labels {
-            let Some(anchor) = label.anchor.resolve(
-                &self.objects,
-                &view,
-                self.camera.projection,
-                self.view,
-                t,
-            ) else {
+            let Some(anchor) =
+                label
+                    .anchor
+                    .resolve(&self.objects, &view, self.camera.projection, self.view, t)
+            else {
                 continue; // culled whole — never a NaN position
             };
             let at = Pt2 {

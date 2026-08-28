@@ -129,7 +129,7 @@ impl Label {
     /// Whether every character renders as authored — `false` when §2.5's
     /// `'?'` substitution would fire. Pure; `eval` stays total.
     pub fn is_ascii_renderable(&self) -> bool {
-        unimplemented!("R-0007: Label::is_ascii_renderable")
+        self.text.chars().all(is_renderable)
     }
 }
 
@@ -141,32 +141,65 @@ impl Anchor {
     /// is `Scene::view` and is read only by [`Anchor::Screen`].
     pub(crate) fn resolve(
         &self,
-        _objects: &[Object],
-        _view: &Motor3,
-        _projection: Projection,
-        _window: (f64, f64),
-        _t: f64,
+        objects: &[Object],
+        view: &Motor3,
+        projection: Projection,
+        window: (f64, f64),
+        t: f64,
     ) -> Option<Pt2> {
-        unimplemented!("R-0007: Anchor::resolve")
+        match self {
+            Anchor::Point(p) => projection.project(&p.transform(view)),
+            Anchor::Pose { object, at } => {
+                // A stale id is reachable: `Scene`'s fields are public and
+                // ids are not scene-scoped. Cull, never panic.
+                let obj = objects.get(object.index())?;
+                // Character-for-character `project_shape`'s two-step, so a
+                // pose-anchored label and a `Shape::Point` on the same
+                // track agree bit-for-bit (AC3).
+                let to_view = view.compose(&obj.track.eval(t));
+                projection.project(&at.transform(&to_view))
+            }
+            Anchor::Screen(a) => {
+                let p = screen_point(*a, window);
+                // A view violating its own contract makes the five
+                // corner/edge points non-finite; the centre is a literal
+                // and survives. Culling here keeps SPEC-0002 §2.2's
+                // invariant unconditional (AC4b).
+                (p.x.is_finite() && p.y.is_finite()).then_some(p)
+            }
+        }
     }
 }
 
 /// Image space is y-up, so `Top` is `+y`. Halving is exact, and the middle
 /// row and column are the literal `0.0` — never arithmetic on `window`, so
 /// `Centre` is `(+0.0, +0.0)` for every view.
-pub(crate) fn screen_point(_anchor: ScreenAnchor, _window: (f64, f64)) -> Pt2 {
-    unimplemented!("R-0007: screen_point")
+pub(crate) fn screen_point(anchor: ScreenAnchor, window: (f64, f64)) -> Pt2 {
+    let (hw, hh) = (window.0 / 2.0, window.1 / 2.0);
+    match anchor {
+        ScreenAnchor::TopLeft => Pt2 { x: -hw, y: hh },
+        ScreenAnchor::TopCentre => Pt2 { x: 0.0, y: hh },
+        ScreenAnchor::TopRight => Pt2 { x: hw, y: hh },
+        ScreenAnchor::MidLeft => Pt2 { x: -hw, y: 0.0 },
+        ScreenAnchor::Centre => Pt2 { x: 0.0, y: 0.0 },
+        ScreenAnchor::MidRight => Pt2 { x: hw, y: 0.0 },
+        ScreenAnchor::BottomLeft => Pt2 { x: -hw, y: -hh },
+        ScreenAnchor::BottomCentre => Pt2 { x: 0.0, y: -hh },
+        ScreenAnchor::BottomRight => Pt2 { x: hw, y: -hh },
+    }
 }
 
 /// Printable ASCII — the alphabet the face covers and the SVG escaper
 /// assumes.
-pub(crate) fn is_renderable(_c: char) -> bool {
-    unimplemented!("R-0007: is_renderable")
+pub(crate) fn is_renderable(c: char) -> bool {
+    matches!(c, ' '..='~')
 }
 
 /// R-0007 AC8, total: every unrenderable `char` becomes exactly one `'?'`,
 /// so the run's length — and therefore its alignment and advance — is
 /// unchanged. Never drops, never panics (§2.5).
-pub(crate) fn to_ascii(_text: &str) -> String {
-    unimplemented!("R-0007: to_ascii")
+pub(crate) fn to_ascii(text: &str) -> String {
+    text.chars()
+        .map(|c| if is_renderable(c) { c } else { '?' })
+        .collect()
 }

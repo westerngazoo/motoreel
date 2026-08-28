@@ -17,7 +17,8 @@ use std::fs;
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 
-use crate::prim::{Prim2, Pt2, Rgb, Style};
+use crate::font;
+use crate::prim::{Align, Prim2, Pt2, Rgb, Style};
 use crate::sink::FrameSink;
 
 /// A point in pixel space: x right, y **down**, pixel centres at `+0.5`.
@@ -187,15 +188,66 @@ impl Canvas {
     }
 
     /// Blit one ASCII run from the embedded face (SPEC-0007 §2.8, §2.9).
-    fn draw_text(
-        &mut self,
-        _at: Pt2,
-        _text: &str,
-        _size: f64,
-        _align: crate::prim::Align,
-        _style: Style,
-    ) {
-        unimplemented!("R-0007: Canvas::draw_text")
+    ///
+    /// Integer nearest-neighbour scaling, integer pen origin, one
+    /// `src_over` per lit pixel. Glyph cells are disjoint, so there is
+    /// nothing to union and no coverage tile is needed — SPEC-0006's
+    /// one-composite-per-pixel-per-primitive rule still holds.
+    fn draw_text(&mut self, at: Pt2, text: &str, size: f64, align: Align, style: Style) {
+        let alpha = unit(style.alpha);
+        // `size` is author data carried verbatim (SPEC-0007 §2.3); this is
+        // the sink's own guard, the counterpart of the stroke path's.
+        if !(size.is_finite() && size > 0.0) || alpha == 0.0 || text.is_empty() {
+            return;
+        }
+        // Integer scale from the face's own metrics, never their values
+        // inline. A sub-font-pixel `size` clamps to 1 rather than vanishing.
+        let k = (size * self.scale / font::CELL_H as f64)
+            .round()
+            .clamp(1.0, 4096.0) as i64;
+        let (px, py) = to_pixel(at, self.scale, self.dims);
+
+        let advance = font::CELL_W * k;
+        let width = advance * text.len() as i64;
+        let pen = match align {
+            Align::Left => px,
+            // `CELL_W · k · n` is even, so the halving is exact.
+            Align::Center => px - (width / 2) as f64,
+            Align::Right => px - width as f64,
+        };
+        let x0 = pen.floor() as i64;
+        // The anchor is the baseline, so the cell top is `BASELINE` font-
+        // pixels above it.
+        let y0 = py.floor() as i64 - font::BASELINE * k;
+
+        for (i, byte) in text.bytes().enumerate() {
+            let bits = font::glyph(byte);
+            let gx = x0 + advance * i as i64;
+            for (r, row) in bits.iter().enumerate() {
+                // `0..5` and `0b10000` are the row's storage layout,
+                // defined by the table's own doc comment — not a metric.
+                for c in 0..5 {
+                    if row & (0b10000 >> c) == 0 {
+                        continue;
+                    }
+                    self.fill_block(gx + k * c, y0 + k * r as i64, k, style.stroke, alpha);
+                }
+            }
+        }
+    }
+
+    /// One `k × k` block, clipped to the canvas before any per-pixel work
+    /// so an off-frame run costs nothing.
+    fn fill_block(&mut self, x: i64, y: i64, k: i64, src: Rgb, alpha: f64) {
+        let Some(tile) = Tile::clip(x, y, x + k, y + k, self.dims) else {
+            return;
+        };
+        for y in tile.y0..tile.y1 {
+            for x in tile.x0..tile.x1 {
+                let i = (y as usize * self.dims.0 as usize + x as usize) * 3;
+                src_over(&mut self.pixels[i..i + 3], src, alpha);
+            }
+        }
     }
 
     /// Rasterize one stroke primitive: union coverage of its round-capped

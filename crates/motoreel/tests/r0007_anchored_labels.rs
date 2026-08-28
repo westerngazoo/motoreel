@@ -279,7 +279,13 @@ fn ac3_pose_anchor_equals_the_independently_computed_projection() {
     let track = moving_track();
     let mut scene = Scene::new(4.0);
     let id = scene.add(Object::point(pga::Point::new(0.0, 0.0, 0.0)).with_track(track.clone()));
-    scene.add_label(Label::new("m", Anchor::Pose { object: id, at: model }));
+    scene.add_label(Label::new(
+        "m",
+        Anchor::Pose {
+            object: id,
+            at: model,
+        },
+    ));
 
     for t in [-1.0, 0.0, 0.5, 1.0, 4.0, 7.0] {
         let prims = scene.eval(t);
@@ -307,7 +313,13 @@ fn ac3_pose_anchor_matches_a_point_object_on_the_same_track() {
     let mut scene = Scene::new(4.0);
     let id = scene.add(Object::point(pga::Point::new(0.0, 0.0, 0.0)).with_track(track.clone()));
     scene.add(Object::point(model).with_track(track));
-    scene.add_label(Label::new("m", Anchor::Pose { object: id, at: model }));
+    scene.add_label(Label::new(
+        "m",
+        Anchor::Pose {
+            object: id,
+            at: model,
+        },
+    ));
 
     for t in [0.0, 1.0, 2.5] {
         let prims = scene.eval(t);
@@ -330,7 +342,13 @@ fn ac3_later_insertions_do_not_move_a_label() {
     let model = pga::Point::new(0.2, 0.3, 0.0);
     let mut scene = Scene::new(1.0);
     let id = scene.add(Object::point(pga::Point::new(0.0, 0.0, 0.0)).with_track(moving_track()));
-    scene.add_label(Label::new("m", Anchor::Pose { object: id, at: model }));
+    scene.add_label(Label::new(
+        "m",
+        Anchor::Pose {
+            object: id,
+            at: model,
+        },
+    ));
     let before = only_text_at(&scene.eval(1.0));
 
     scene.add(Object::point(pga::Point::new(9.0, 9.0, 0.0)));
@@ -420,9 +438,7 @@ fn ac4_nine_screen_anchors_are_fixed_across_time_camera_projection() {
                 for t in [0.0, 1.0, 7.0] {
                     let mut scene = Scene::new(8.0);
                     scene.camera = Camera { pose, projection };
-                    scene.add_label(
-                        Label::new("x", Anchor::Screen(anchor)).with_offset(offset),
-                    );
+                    scene.add_label(Label::new("x", Anchor::Screen(anchor)).with_offset(offset));
                     assert_eq!(
                         bits(only_text_at(&scene.eval(t))),
                         bits(want),
@@ -450,7 +466,12 @@ fn ac4_nine_screen_anchors_are_fixed_across_time_camera_projection() {
 // coordinates are a literal and not arithmetic.
 #[test]
 fn ac4_middle_row_and_column_are_positive_zero() {
-    for view in [(3.2, 1.8), (-4.0, -2.0), (f64::NAN, 1.0), (f64::INFINITY, 2.0)] {
+    for view in [
+        (3.2, 1.8),
+        (-4.0, -2.0),
+        (f64::NAN, 1.0),
+        (f64::INFINITY, 2.0),
+    ] {
         let mut scene = Scene::new(1.0);
         scene.view = view;
         scene.add_label(Label::new("c", Anchor::Screen(ScreenAnchor::Centre)));
@@ -758,10 +779,7 @@ fn ac7_eval_and_clone_agree() {
         assert_eq!(a.len(), b.len(), "t = {t}: same primitive count");
         for (x, y) in a.iter().zip(&b) {
             match (x, y) {
-                (
-                    Prim2::Text { at: p, text: s, .. },
-                    Prim2::Text { at: q, text: r, .. },
-                ) => {
+                (Prim2::Text { at: p, text: s, .. }, Prim2::Text { at: q, text: r, .. }) => {
                     assert_eq!(bits(*p), bits(*q), "t = {t}: position bits");
                     assert_eq!(s, r, "t = {t}: identical strings");
                 }
@@ -867,8 +885,378 @@ fn ac8_both_sinks_see_the_same_substituted_string() {
 
     let svg = {
         let mut scene = Scene::new(1.0);
-        scene.add_label(Label::new("g\u{00E9}", Anchor::Screen(ScreenAnchor::Centre)));
+        scene.add_label(Label::new(
+            "g\u{00E9}",
+            Anchor::Screen(ScreenAnchor::Centre),
+        ));
         svg_of("r0007_ac8_svg", &scene)
     };
-    assert!(svg.contains(">g?</text>"), "SVG shows the same substitution");
+    assert!(
+        svg.contains(">g?</text>"),
+        "SVG shows the same substitution"
+    );
+}
+
+// --- AC6: PpmSink rasterizes from the embedded face -----------------------
+//
+// The fixture frame: 96 × 48 over view (3.0, 1.5), so `s = 32` exactly. At
+// that scale the cell height `8/s` is `0.25`, every baseline row lands on a
+// dyadic image coordinate, and `size = 0.5 → k = 2` / `size = 0.25 → k = 1`
+// are exact rather than rounding accidents (SPEC-0007 §3).
+
+const GLYPH_DIMS: (u32, u32) = (96, 48);
+const GLYPH_VIEW: (f64, f64) = (3.0, 1.5);
+const GLYPH_S: f64 = 32.0;
+
+fn ppm_header_len(dims: (u32, u32)) -> usize {
+    format!("P6\n{} {}\n255\n", dims.0, dims.1).len()
+}
+
+fn ppm_pixel(frame: &[u8], dims: (u32, u32), x: u32, y: u32) -> [u8; 3] {
+    let i = ppm_header_len(dims) + (y as usize * dims.0 as usize + x as usize) * 3;
+    [frame[i], frame[i + 1], frame[i + 2]]
+}
+
+/// Render a label scene into the fixture frame and return the whole file.
+fn glyph_frame(name: &str, labels: Vec<Label>) -> Vec<u8> {
+    let dir = tmp_dir(name);
+    let mut sink = PpmSink::with_view(&dir, GLYPH_DIMS, GLYPH_VIEW).expect("sink");
+    let mut scene = Scene::new(1.0);
+    scene.view = GLYPH_VIEW;
+    for l in labels {
+        scene.add_label(l);
+    }
+    scene.render(1.0, &mut sink).expect("render");
+    fs::read(dir.join("frame_00000.ppm")).expect("read")
+}
+
+fn white() -> Style {
+    Style {
+        stroke: Rgb::WHITE,
+        width: 0.0,
+        alpha: 1.0,
+    }
+}
+
+/// Rows of the frame in which any pixel is lit.
+fn lit_rows(frame: &[u8], dims: (u32, u32)) -> Vec<u32> {
+    (0..dims.1)
+        .filter(|&y| (0..dims.0).any(|x| ppm_pixel(frame, dims, x, y) != [0, 0, 0]))
+        .collect()
+}
+
+// AC6(b) — the `k` derivation, pinned exactly, plus the degenerate sizes.
+#[test]
+fn ac6_scale_factor_is_derived_from_the_cell_height() {
+    // A capital H is 5 columns wide and spans rows 0..=5 of the cell, so
+    // its lit height in pixels is exactly 6k — the cheapest observable
+    // proof of k without exposing it.
+    for (size, k) in [(0.25_f64, 1_u32), (0.5, 2), (1.0, 4)] {
+        let frame = glyph_frame(
+            &format!("r0007_ac6_k{k}"),
+            vec![Label::new("H", Anchor::Screen(ScreenAnchor::Centre))
+                .with_size(size)
+                .with_style(white())],
+        );
+        let rows = lit_rows(&frame, GLYPH_DIMS);
+        assert_eq!(
+            rows.len() as u32,
+            6 * k,
+            "size {size} at s = {GLYPH_S} must give k = {k} (6k lit rows)"
+        );
+    }
+
+    // A sub-font-pixel size clamps to k = 1 rather than vanishing.
+    let tiny = glyph_frame(
+        "r0007_ac6_tiny",
+        vec![Label::new("H", Anchor::Screen(ScreenAnchor::Centre))
+            .with_size(1e-6)
+            .with_style(white())],
+    );
+    assert_eq!(lit_rows(&tiny, GLYPH_DIMS).len(), 6, "clamps to k = 1");
+
+    // NaN or non-positive paints nothing.
+    for bad in [f64::NAN, 0.0, -1.0, f64::INFINITY] {
+        let frame = glyph_frame(
+            &format!("r0007_ac6_bad_{}", bad.to_bits()),
+            vec![Label::new("H", Anchor::Screen(ScreenAnchor::Centre))
+                .with_size(bad)
+                .with_style(white())],
+        );
+        assert!(
+            lit_rows(&frame, GLYPH_DIMS).is_empty(),
+            "size {bad} must paint nothing"
+        );
+    }
+}
+
+// AC6(c) — the alignment arithmetic, asserted exactly. A 3-character run at
+// k = 2 is w = 36 px, so `Center` pens at `px − 18` and `Right` at
+// `px − 36`. `w/2` is integral for every k and n because CELL_W is even.
+#[test]
+fn ac6_alignment_arithmetic_is_exact() {
+    // "HHH" at size 0.5 → k = 2, advance 12, w = 36.
+    let px = 48_u32; // Centre maps to x = 48
+    let cases = [
+        (Align::Left, px),
+        (Align::Center, px - 18),
+        (Align::Right, px - 36),
+    ];
+    for (align, want_x0) in cases {
+        let frame = glyph_frame(
+            &format!("r0007_ac6_align_{align:?}"),
+            vec![Label::new("HHH", Anchor::Screen(ScreenAnchor::Centre))
+                .with_size(0.5)
+                .with_align(align)
+                .with_style(white())],
+        );
+        let first_lit = (0..GLYPH_DIMS.0)
+            .find(|&x| (0..GLYPH_DIMS.1).any(|y| ppm_pixel(&frame, GLYPH_DIMS, x, y) != [0, 0, 0]))
+            .expect("the run is on frame");
+        assert_eq!(
+            first_lit, want_x0,
+            "{align:?}: a 3-char run at k = 2 is 36 px wide, so the pen is here"
+        );
+    }
+    // The halving is exact for every k and n: CELL_W is even.
+    for k in 1..=8_i64 {
+        for n in 1..=20_i64 {
+            assert_eq!((6 * k * n) % 2, 0, "k = {k}, n = {n}: w must be even");
+        }
+    }
+}
+
+// AC6(d) — the baseline convention: a capital sits ON the baseline, so its
+// lowest lit row is `py − 1` at k = 1 and nothing is lit at `py`; a 'g'
+// lights `py` with its descender.
+#[test]
+fn ac6_the_anchor_sits_on_the_baseline() {
+    // Centre maps to py = 24, an integral row.
+    let py = 24_u32;
+    let cap = glyph_frame(
+        "r0007_ac6_baseline_h",
+        vec![Label::new("H", Anchor::Screen(ScreenAnchor::Centre))
+            .with_size(0.25)
+            .with_style(white())],
+    );
+    let rows = lit_rows(&cap, GLYPH_DIMS);
+    assert_eq!(
+        *rows.last().expect("H is lit"),
+        py - 1,
+        "a capital's lowest lit row is one above the baseline"
+    );
+    assert!(!rows.contains(&py), "nothing is lit at the baseline itself");
+
+    let desc = glyph_frame(
+        "r0007_ac6_baseline_g",
+        vec![Label::new("g", Anchor::Screen(ScreenAnchor::Centre))
+            .with_size(0.25)
+            .with_style(white())],
+    );
+    assert!(
+        lit_rows(&desc, GLYPH_DIMS).contains(&py),
+        "'g' reaches the baseline row with its descender"
+    );
+}
+
+// AC6(e) — ink lands within ±1 px of `to_pixel(at)` (SPEC-0006 §2.8's
+// tolerance, extended), and background is preserved outside the cell box.
+#[test]
+fn ac6_ink_lands_at_the_mapped_anchor() {
+    let frame = glyph_frame(
+        "r0007_ac6_place",
+        vec![Label::new("H", Anchor::Screen(ScreenAnchor::Centre))
+            .with_size(0.25)
+            .with_style(white())],
+    );
+    // Centre → at = (0, 0) → (px, py) = (48, 24). The cell is 6 × 8 with
+    // the baseline 6 rows down, so ink lives in x ∈ [48, 53], y ∈ [18, 23].
+    let lit: Vec<(u32, u32)> = (0..GLYPH_DIMS.1)
+        .flat_map(|y| (0..GLYPH_DIMS.0).map(move |x| (x, y)))
+        .filter(|&(x, y)| ppm_pixel(&frame, GLYPH_DIMS, x, y) != [0, 0, 0])
+        .collect();
+    assert!(!lit.is_empty(), "the run must be drawn");
+    for (x, y) in lit {
+        assert!(
+            (48..=52).contains(&x) && (18..=23).contains(&y),
+            "ink at ({x}, {y}) escaped the run's cell box"
+        );
+    }
+}
+
+// AC6(f) — SPEC-0006's own golden is byte-unchanged: routing text through
+// `draw` must not disturb the stroke path.
+#[test]
+fn ac6_the_stroke_golden_is_untouched() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/frame_00000.ppm");
+    let bytes = fs::read(&fixture).expect("SPEC-0006's golden still exists");
+    assert_eq!(bytes.len(), 13 + 64 * 36 * 3, "still the 64 × 36 fixture");
+    assert_eq!(&bytes[..13], b"P6\n64 36\n255\n");
+}
+
+/// SPEC-0007 §3's PPM label scene: three labels, no objects.
+fn glyph_scene_labels() -> Vec<Label> {
+    vec![
+        Label::new("MOTO", Anchor::Screen(ScreenAnchor::Centre))
+            .with_offset(pt(0.0, -0.25))
+            .with_size(0.5)
+            .with_align(Align::Center)
+            .with_style(white()),
+        Label::new("g\u{00E9}", Anchor::Screen(ScreenAnchor::BottomLeft))
+            .with_offset(pt(0.0625, 0.0625))
+            .with_size(0.25)
+            .with_style(Style {
+                stroke: Rgb {
+                    r: 0xff,
+                    g: 0x4d,
+                    b: 0x00,
+                },
+                width: 0.0,
+                alpha: 1.0,
+            }),
+        Label::new("MOTO", Anchor::Screen(ScreenAnchor::Centre))
+            .with_offset(pt(0.375, -0.25))
+            .with_size(0.5)
+            .with_align(Align::Center)
+            .with_style(Style {
+                stroke: Rgb {
+                    r: 0x00,
+                    g: 0xb4,
+                    b: 0xd8,
+                },
+                width: 0.0,
+                alpha: 0.5,
+            }),
+    ]
+}
+
+const LABELS_PPM: &[u8] = include_bytes!("golden/labels_00000.ppm");
+
+/// Decode a byte offset into `(x, y, channel)` — SPEC-0006 §6 AC3's
+/// reporter, reused so a binary golden still fails legibly.
+fn locate(offset: usize, dims: (u32, u32)) -> String {
+    let head = ppm_header_len(dims);
+    if offset < head {
+        return format!("header byte {offset}");
+    }
+    let i = offset - head;
+    let (px, channel) = (i / 3, i % 3);
+    format!(
+        "pixel ({}, {}) channel {}",
+        px as u32 % dims.0,
+        px as u32 / dims.0,
+        ["R", "G", "B"][channel]
+    )
+}
+
+// AC6(g) — the PPM label golden, plus the named pixel probes SPEC-0007 §3
+// derives, so a byte diff says which claim broke and not merely that one
+// did.
+#[test]
+fn ac6_labels_ppm_golden_matches_with_named_probes() {
+    let got = glyph_frame("r0007_ac6_golden", glyph_scene_labels());
+
+    if std::env::var_os("MOTOREEL_BLESS").is_some_and(|v| v == "1") {
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/labels_00000.ppm");
+        fs::write(&fixture, &got).expect("bless");
+        eprintln!("blessed {}", fixture.display());
+        return;
+    }
+
+    assert_eq!(
+        got.len(),
+        13 + 96 * 48 * 3,
+        "a 96 × 48 P6 frame is 13 header bytes plus 13 824 pixel bytes"
+    );
+
+    // The two composites §3 derives, asserted as named probes. Run 3 is
+    // teal at alpha 0.5, displaced from run 1 by exactly one k = 2 cell.
+    let teal_over_black = [0, 90, 108];
+    let teal_over_white = [128, 218, 236];
+    assert!(
+        (0..GLYPH_DIMS.0).any(
+            |x| (0..GLYPH_DIMS.1).any(|y| ppm_pixel(&got, GLYPH_DIMS, x, y) == teal_over_black)
+        ),
+        "run 3 must composite over background to (0, 90, 108)"
+    );
+    assert!(
+        (0..GLYPH_DIMS.0).any(
+            |x| (0..GLYPH_DIMS.1).any(|y| ppm_pixel(&got, GLYPH_DIMS, x, y) == teal_over_white)
+        ),
+        "run 3 over run 1's white must be (128, 218, 236) — the ties-away \
+         rounding rule, pinned as a side effect"
+    );
+    // Run 2's baseline row is 46 and its descender puts ink there.
+    assert!(
+        (2..14).any(|x| ppm_pixel(&got, GLYPH_DIMS, x, 46) != [0, 0, 0]),
+        "run 2's 'g' descender must light its baseline row"
+    );
+
+    assert_eq!(LABELS_PPM.len(), got.len(), "fixture length");
+    if let Some(at) = (0..got.len()).find(|&i| got[i] != LABELS_PPM[i]) {
+        panic!(
+            "the label golden drifted at byte {at} — {}: rendered {}, fixture {}",
+            locate(at, GLYPH_DIMS),
+            got[at],
+            LABELS_PPM[at]
+        );
+    }
+}
+
+/// The specimen: six rows of 16 glyphs covering all 95 code points.
+fn specimen_labels() -> Vec<Label> {
+    (0..6)
+        .map(|r| {
+            let first = 0x20 + 16 * r;
+            let text: String = (first..(first + 16).min(0x7F))
+                .map(|c| c as u8 as char)
+                .collect();
+            Label::new(text, Anchor::Screen(ScreenAnchor::TopLeft))
+                .with_offset(pt(0.0, -f64::from(6 + 8 * r) / GLYPH_S))
+                .with_size(0.25)
+                .with_style(white())
+        })
+        .collect()
+}
+
+const SPECIMEN: &[u8] = include_bytes!("golden/font_specimen.ppm");
+
+// AC6(h) — the specimen is mandatory: it is the only artefact in which the
+// face is reviewable. It also asserts that no row's ink reaches the next
+// row's cell top, so a mis-authored descender fails rather than merely
+// looking wrong.
+#[test]
+fn ac6_font_specimen_matches_and_no_row_collides() {
+    let got = glyph_frame("r0007_ac6_specimen", specimen_labels());
+
+    if std::env::var_os("MOTOREEL_BLESS").is_some_and(|v| v == "1") {
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/font_specimen.ppm");
+        fs::write(&fixture, &got).expect("bless");
+        eprintln!("blessed {}", fixture.display());
+        return;
+    }
+
+    // Rows are 8 px tall with baselines at 6, 14, 22, 30, 38, 46; each
+    // row's descender row is its baseline, two rows clear of the next
+    // row's cell top.
+    for r in 0..6u32 {
+        let cell_top = 8 * r;
+        let baseline = cell_top + 6;
+        for y in (baseline + 1)..(cell_top + 8) {
+            assert!(
+                (0..GLYPH_DIMS.0).all(|x| ppm_pixel(&got, GLYPH_DIMS, x, y) == [0, 0, 0]),
+                "row {r}: ink at y = {y} would collide with the next row"
+            );
+        }
+    }
+
+    assert_eq!(SPECIMEN.len(), got.len(), "fixture length");
+    if let Some(at) = (0..got.len()).find(|&i| got[i] != SPECIMEN[i]) {
+        panic!(
+            "the specimen drifted at byte {at} — {}: rendered {}, fixture {}",
+            locate(at, GLYPH_DIMS),
+            got[at],
+            SPECIMEN[at]
+        );
+    }
 }
