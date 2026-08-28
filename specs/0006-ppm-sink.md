@@ -1223,6 +1223,9 @@ crates/motoreel/tests/golden/*.svg -text` (architect review S6-6) | R-0003's `fr
 | 2026-08-27 | §5's four open questions adjudicated as recommended: 64×36 golden, amend `first_light/main.rs`, `Rgb::BLACK` default with `with_background`, no `ffprobe` | Architect adjudication, owner acceptance pending. The golden's size gains a second reason: at `s = 20` its radii are `r ∈ [1.2, 3.0]` px, inside §2.8's `r ≥ 1` px regime, whereas a 32×18 fixture (`s = 10`) gives `r ∈ [0.6, 1.5]` — two of its four objects below the tolerance it is meant to demonstrate and a third exactly on it (§5) |
 | 2026-08-27 | AC6 asserts the encoded mp4's bytes `4..8` are `b"ftyp"`, in place of an `ffprobe` stream check | The ISO-BMFF box type is four bytes of assertion with no new tool and no third skip axis, and it catches the one failure a zero exit status misses: ffmpeg succeeding and writing garbage (§2.10, §5) |
 
+| 2026-08-27 | §3's golden table gains a **column qualification**: the segment's "rows 16–19 exactly `255`, rows 15 and 20 exactly `0`" is a true reading only in a column the teal polyline does not cross (implementation, golden review) | The polyline's apex is authored at image `x = 0` — which is exactly the segment's midpoint column, pixel 32. Painter's order draws teal *after* the white segment, so column 32 reads `(0,90,108)` above the segment (teal over black) and `(182,233,244)`/`(252,254,255)` across its top rows (teal partial coverage over white). The prediction verifies at column 15 (image `x = −0.85`), on the segment and clear of the polyline's leftmost reach (`x = −0.5` → pixel 22, less its `r = 1.6` px cap). Every other §3 prediction — the `r = 3` px orange disc at pixel (42, 8), the edges' rows 3/4 at `255` and rows 2/5 at byte **51**, the disjoint arm tiles, the half-value teal — held exactly on first blessing |
+| 2026-08-27 | The **lit extent `2r + 1` px is qualified by sub-pixel offset**, and is asserted only at the unit layer, which controls that offset (implementation) | `2r + 1` is the extent when the centre-line sits on a pixel **centre**. On a pixel **boundary** with integer `r` the two outermost rows land at *exactly* zero coverage and drop out, giving `2r`: the golden's own `r = 2` segment on boundary `y = 18.0` lights 4 rows, and AC4's `r = 1` boundary case lights 2, not 3. Both are already asserted, and they contradict a single frame-level extent formula across widths — so `ac4_frame_level_cross_section_carries_the_width_within_rounding` asserts only the `n / 510` width bound it is named for, and `lit_extent_is_two_r_plus_one_not_proportional` keeps the extent claim at `y₀ = 10.5`. §2.8's "the lit extent is `2r + 1`" should be read as the centred (maximal) case |
+
 ## Changelog
 
 - 2026-08-27 — created.
@@ -1231,3 +1234,9 @@ crates/motoreel/tests/golden/*.svg -text` (architect review S6-6) | R-0003's `fr
   exact `Σ coverage == s · width` identity; §2.13 added, amending SPEC-0003
   §2.5; §5's four open questions adjudicated and closed. History is appended
   to, not rewritten.
+- 2026-08-27 — implemented (36 red tests → 128 green workspace-wide; clippy
+  and rustfmt clean). Two decision-log rows added from the golden review:
+  §3's segment prediction is column-qualified, and the `2r + 1` lit extent
+  is offset-qualified. The AC6 encode ran for real against Homebrew ffmpeg
+  8.0 with libx264 and produced a valid 3.5 KB mp4 — the bug R-0006 was
+  filed for is fixed end to end, not merely worked around.

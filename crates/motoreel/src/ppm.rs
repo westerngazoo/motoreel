@@ -5,11 +5,16 @@
 //! worked on a stock build. P6 is decoded by every ffmpeg ever shipped.
 //!
 //! Ink lands where [`crate::SvgSink`] puts it (SPEC-0006 §2.3): the two
-//! sinks share no code, only a documented mapping. Byte-determinism is
-//! SPEC-0003's discipline unchanged — no clock, no environment, no map
-//! iteration, and no `mul_add` on the write path.
+//! sinks share no code, only a documented mapping — the only thing they
+//! could share is four lines of arithmetic whose two spellings, an SVG
+//! attribute and an `f64` expression, have no common form.
+//!
+//! Byte-determinism is SPEC-0003's discipline unchanged: no clock, no
+//! environment, no randomness, no map iteration, and no `mul_add` on the
+//! write path (§2.7).
 
-use std::io;
+use std::fs;
+use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 
 use crate::prim::{Prim2, Pt2, Rgb, Style};
@@ -20,15 +25,13 @@ type Px = (f64, f64);
 
 /// Writes one `frame_%05d.ppm` per frame into a directory (RFC-012 §3.3).
 ///
-/// Stroke widths are in image (view) units exactly as for `SvgSink`, so
-/// swapping one sink for the other reproduces the same picture.
+/// Stroke widths are in image (view) units exactly as for
+/// [`crate::SvgSink`], so swapping one sink for the other reproduces the
+/// same picture — the defaults are deliberately identical.
 pub struct PpmSink {
-    #[allow(dead_code)]
     dir: PathBuf,
     /// Frozen at construction: ASCII, no float formatting (§2.2).
-    #[allow(dead_code)]
     header: Vec<u8>,
-    #[allow(dead_code)]
     canvas: Canvas,
 }
 
@@ -40,36 +43,97 @@ impl PpmSink {
     }
 
     /// Sink into `dir` with an explicit raster size (px) and centred
-    /// image-space view window — the pair `SvgSink::with_view` takes,
-    /// mapped identically (§2.3).
+    /// image-space view window — the pair [`crate::SvgSink::with_view`]
+    /// takes, mapped identically (§2.3).
     ///
     /// Zero raster dimensions, a non-finite/non-positive view, or a frame
     /// whose `w·h·3` byte count does not fit in `usize` are
-    /// [`io::ErrorKind::InvalidInput`], rejected before the directory is
-    /// created. Allocation failure is [`io::ErrorKind::OutOfMemory`].
+    /// [`io::ErrorKind::InvalidInput`], rejected **before** the directory
+    /// is created: invalid input has no side effects. Allocation failure is
+    /// [`io::ErrorKind::OutOfMemory`] rather than an abort inside `Vec`.
     pub fn with_view(
-        _dir: impl AsRef<Path>,
-        _size: (u32, u32),
-        _view: (f64, f64),
+        dir: impl AsRef<Path>,
+        size: (u32, u32),
+        view: (f64, f64),
     ) -> io::Result<Self> {
-        unimplemented!("R-0006: PpmSink::with_view")
+        if size.0 == 0 || size.1 == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "raster size must be non-zero in both dimensions",
+            ));
+        }
+        let view_valid = view.0.is_finite() && view.1.is_finite() && view.0 > 0.0 && view.1 > 0.0;
+        if !view_valid {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "view window must be finite and positive",
+            ));
+        }
+        // A caller-supplied (100_000, 100_000) would otherwise abort the
+        // process inside `Vec`; constitution §6 forbids unchecked failures
+        // in library code.
+        let bytes = u64::from(size.0) * u64::from(size.1) * 3;
+        let Ok(bytes) = usize::try_from(bytes) else {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "frame too large",
+            ));
+        };
+
+        let mut pixels = Vec::new();
+        pixels
+            .try_reserve_exact(bytes)
+            .map_err(|_| io::Error::new(io::ErrorKind::OutOfMemory, "frame buffer"))?;
+        pixels.resize(bytes, 0);
+
+        let dir = dir.as_ref().to_path_buf();
+        fs::create_dir_all(&dir)?;
+
+        Ok(PpmSink {
+            dir,
+            header: format!("P6\n{} {}\n255\n", size.0, size.1).into_bytes(),
+            canvas: Canvas {
+                size,
+                // `min` is what SVG's `xMidYMid meet` does; two independent
+                // scales would skew every angle (§2.3).
+                scale: (f64::from(size.0) / view.0).min(f64::from(size.1) / view.1),
+                background: Rgb::BLACK,
+                pixels,
+                coverage: Vec::new(),
+                segments: Vec::new(),
+            },
+        })
     }
 
     /// Composite alpha against `background` instead of black. PPM has no
     /// alpha channel, so the background is explicit rather than implied.
-    pub fn with_background(self, _background: Rgb) -> Self {
-        unimplemented!("R-0006: PpmSink::with_background")
+    ///
+    /// A consuming builder, matching `Object::with_style`/`with_track` —
+    /// not a fourth constructor.
+    pub fn with_background(mut self, background: Rgb) -> Self {
+        self.canvas.background = background;
+        self
     }
 }
 
 impl FrameSink for PpmSink {
-    fn frame(&mut self, _index: usize, _prims: &[Prim2]) -> io::Result<()> {
-        unimplemented!("R-0006: PpmSink::frame")
+    fn frame(&mut self, index: usize, prims: &[Prim2]) -> io::Result<()> {
+        self.canvas.clear();
+        for prim in prims {
+            self.canvas.draw(prim); // draw order = slice order (painter's)
+        }
+        let path = self.dir.join(format!("frame_{index:05}.ppm"));
+        let mut file = fs::File::create(path)?;
+        file.write_all(&self.header)?;
+        file.write_all(self.canvas.pixels())
     }
 }
 
 /// Pixel canvas: the pinned mapping plus the coverage rasterizer.
-#[allow(dead_code)]
+///
+/// A private type with exactly one consumer, so it stays in this module —
+/// a module per single abstraction is the premature abstraction the
+/// constitution forbids. The R-0007 promotion path is SPEC-0006 §2.12.
 struct Canvas {
     size: (u32, u32),
     /// Pixels per image unit — `min(W/vw, H/vh)` (§2.3).
@@ -83,17 +147,70 @@ struct Canvas {
     segments: Vec<(Px, Px)>,
 }
 
-#[allow(dead_code)]
 impl Canvas {
-    /// Refill every pixel with the background triple (§2.6).
+    /// Refill every pixel with the background triple (§2.6): no frame
+    /// inherits a pixel from its predecessor.
     fn clear(&mut self) {
-        unimplemented!("R-0006: Canvas::clear")
+        let bg = [self.background.r, self.background.g, self.background.b];
+        for px in self.pixels.chunks_exact_mut(3) {
+            px.copy_from_slice(&bg);
+        }
     }
 
     /// Rasterize one primitive: union coverage of its round-capped
     /// segments, composited src-over in a single pass (§2.5).
-    fn draw(&mut self, _prim: &Prim2) {
-        unimplemented!("R-0006: Canvas::draw")
+    fn draw(&mut self, prim: &Prim2) {
+        let style = style_of(prim);
+        let radius = 0.5 * self.scale * style.width;
+        let alpha = unit(style.alpha);
+        // `stroke-width="0"` paints nothing in SVG, and must here too:
+        // without this the ramp would paint a phantom 50 % hairline. The
+        // `is_finite()` half rejects NaN *and* an infinite radius, which
+        // would make `pad` infinite and the tile the whole canvas.
+        if !(radius.is_finite() && radius > 0.0) || alpha == 0.0 {
+            return;
+        }
+
+        let (scale, size) = (self.scale, self.size);
+        self.segments.clear();
+        push_segments(prim, |p| to_pixel(p, scale, size), &mut self.segments);
+        // The finite contract is SPEC-0002's; the debug_assert is the
+        // tripwire, the retain keeps `floor`/`ceil` → u32 honest (§2.9).
+        debug_assert!(self.segments.iter().all(|&(a, b)| finite(a) && finite(b)));
+        self.segments.retain(|&(a, b)| finite(a) && finite(b));
+
+        let pad = radius + 0.5; // the AA ramp's reach beyond the boundary
+        let Some(tile) = Tile::around(&self.segments, pad, size) else {
+            return;
+        };
+        self.coverage.clear();
+        self.coverage.resize(tile.area(), 0.0);
+
+        for &(a, b) in &self.segments {
+            let Some(band) = tile.intersect(Tile::around(&[(a, b)], pad, size)) else {
+                continue;
+            };
+            for y in band.y0..band.y1 {
+                for x in band.x0..band.x1 {
+                    let centre = (f64::from(x) + 0.5, f64::from(y) + 0.5);
+                    let c = coverage(distance_to_segment(centre, a, b), radius);
+                    let slot = &mut self.coverage[tile.offset(x, y)];
+                    if c > *slot {
+                        *slot = c; // union by max — no accumulation (§2.5)
+                    }
+                }
+            }
+        }
+
+        for y in tile.y0..tile.y1 {
+            for x in tile.x0..tile.x1 {
+                let c = self.coverage[tile.offset(x, y)];
+                if c > 0.0 {
+                    let i = (y as usize * size.0 as usize + x as usize) * 3;
+                    src_over(&mut self.pixels[i..i + 3], style.stroke, c * alpha);
+                }
+            }
+        }
     }
 
     fn pixels(&self) -> &[u8] {
@@ -104,67 +221,97 @@ impl Canvas {
 /// Image space (y-up, centred) → pixel space (y-down, centres at `+0.5`).
 /// The closed form of `SvgSink`'s `scale(1 -1)` ∘ viewBox ∘ `xMidYMid meet`
 /// chain — §2.3 derives it; the two sinks agree because of this function.
-#[allow(dead_code)]
-fn to_pixel(_p: Pt2, _scale: f64, _size: (u32, u32)) -> Px {
-    unimplemented!("R-0006: to_pixel")
+fn to_pixel(p: Pt2, scale: f64, size: (u32, u32)) -> Px {
+    (
+        f64::from(size.0) / 2.0 + scale * p.x,
+        f64::from(size.1) / 2.0 - scale * p.y,
+    )
 }
 
 /// Every primitive is a union of round-capped segments (§2.4). Exhaustive
 /// with no `_` arm on purpose: R-0007's new variant must be a compile
 /// error, never a silently unrendered label.
-#[allow(dead_code)]
-fn push_segments(_prim: &Prim2, _map: impl Fn(Pt2) -> Px, _out: &mut Vec<(Px, Px)>) {
-    unimplemented!("R-0006: push_segments")
+fn push_segments(prim: &Prim2, map: impl Fn(Pt2) -> Px, out: &mut Vec<(Px, Px)>) {
+    match prim {
+        Prim2::Point { at, .. } => out.push((map(*at), map(*at))),
+        Prim2::Segment { a, b, .. } => out.push((map(*a), map(*b))),
+        // `< 2` points yields no segments — the degenerate case needs no branch
+        Prim2::Polyline { points, .. } => {
+            out.extend(points.windows(2).map(|w| (map(w[0]), map(w[1]))));
+        }
+        Prim2::Edges { segments, .. } => {
+            out.extend(segments.iter().map(|(a, b)| (map(*a), map(*b))));
+        }
+    }
 }
 
 /// Distance in pixels from `p` to segment `a`–`b`. A degenerate segment
 /// (`a == b`) gives the distance to the point — which is what makes a
 /// `Point` a disc and a round cap a cap (§2.4).
-#[allow(dead_code)]
-fn distance_to_segment(_p: Px, _a: Px, _b: Px) -> f64 {
-    unimplemented!("R-0006: distance_to_segment")
+fn distance_to_segment(p: Px, a: Px, b: Px) -> f64 {
+    let (abx, aby) = (b.0 - a.0, b.1 - a.1);
+    let (apx, apy) = (p.0 - a.0, p.1 - a.1);
+    let len2 = abx * abx + aby * aby;
+    let t = if len2 > 0.0 {
+        ((apx * abx + apy * aby) / len2).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let (dx, dy) = (apx - t * abx, apy - t * aby);
+    (dx * dx + dy * dy).sqrt() // IEEE-exact; no libm, no `mul_add` (§2.7)
 }
 
 /// Coverage of a pixel whose centre lies `d` px from the centre-line of a
 /// stroke of radius `r` px: the pinned one-pixel ramp — 1 inside, 0.5 on
 /// the boundary, 0 outside (§2.5).
-#[allow(dead_code)]
-fn coverage(_d: f64, _r: f64) -> f64 {
-    unimplemented!("R-0006: coverage")
+fn coverage(d: f64, r: f64) -> f64 {
+    unit(r + 0.5 - d)
 }
 
 /// Source-over in 8-bit sRGB — SVG's default `color-interpolation` — with
 /// one pinned rounding (`f64::round`, ties away from zero).
-#[allow(dead_code)]
-fn src_over(_dst: &mut [u8], _src: Rgb, _a: f64) {
-    unimplemented!("R-0006: src_over")
+fn src_over(dst: &mut [u8], src: Rgb, a: f64) {
+    for (slot, s) in dst.iter_mut().zip([src.r, src.g, src.b]) {
+        let out = f64::from(s) * a + f64::from(*slot) * (1.0 - a);
+        *slot = out.round() as u8; // `out ∈ [0, 255]`; the cast saturates
+    }
 }
 
 /// The style every `Prim2` variant carries (SPEC-0002 §2.2).
-#[allow(dead_code)]
-fn style_of(_prim: &Prim2) -> Style {
-    unimplemented!("R-0006: style_of")
+fn style_of(prim: &Prim2) -> Style {
+    match prim {
+        Prim2::Point { style, .. }
+        | Prim2::Segment { style, .. }
+        | Prim2::Polyline { style, .. }
+        | Prim2::Edges { style, .. } => *style,
+    }
 }
 
 /// Both coordinates finite — the guard that keeps `floor`/`ceil` → `u32`
 /// from saturating into a nonsense tile (§2.9).
-#[allow(dead_code)]
 fn finite(p: Px) -> bool {
     p.0.is_finite() && p.1.is_finite()
 }
 
 /// Total clamp to `[0, 1]`; NaN maps to 0, so a style violating its
 /// documented contract paints nothing rather than poisoning the frame
-/// (§2.5). **Not `x.clamp(0.0, 1.0)`** — `f64::clamp` returns NaN for NaN.
-#[allow(dead_code)]
-fn unit(_x: f64) -> f64 {
-    unimplemented!("R-0006: unit")
+/// (§2.5). **Not `x.clamp(0.0, 1.0)`** — `f64::clamp` returns NaN for NaN,
+/// which would let a NaN alpha reach `src_over` and paint garbage. The
+/// comparison order is what routes NaN to the final `else`; see SPEC-0006
+/// §3's clippy note before changing it.
+fn unit(x: f64) -> f64 {
+    if x > 1.0 {
+        1.0
+    } else if x > 0.0 {
+        x
+    } else {
+        0.0
+    }
 }
 
 /// A half-open pixel rectangle clamped to the canvas — the region ink can
 /// reach. `None` when empty (entirely off-canvas, or no segments).
 #[derive(Clone, Copy)]
-#[allow(dead_code)]
 struct Tile {
     x0: u32,
     y0: u32,
@@ -172,19 +319,46 @@ struct Tile {
     y1: u32,
 }
 
-#[allow(dead_code)]
 impl Tile {
-    fn around(_segments: &[(Px, Px)], _pad: f64, _size: (u32, u32)) -> Option<Tile> {
-        unimplemented!("R-0006: Tile::around")
+    /// The clamped bounding box of `segments` grown by `pad`.
+    fn around(segments: &[(Px, Px)], pad: f64, size: (u32, u32)) -> Option<Tile> {
+        let (mut lo, mut hi) = ((f64::MAX, f64::MAX), (f64::MIN, f64::MIN));
+        for &(a, b) in segments {
+            for p in [a, b] {
+                lo = (lo.0.min(p.0), lo.1.min(p.1));
+                hi = (hi.0.max(p.0), hi.1.max(p.1));
+            }
+        }
+        if segments.is_empty() {
+            return None;
+        }
+        // Every input is finite (the caller's `retain`), so these casts
+        // cannot saturate into a nonsense tile.
+        let x0 = (lo.0 - pad).floor().max(0.0) as u32;
+        let y0 = (lo.1 - pad).floor().max(0.0) as u32;
+        let x1 = ((hi.0 + pad).ceil().max(0.0) as u32 + 1).min(size.0);
+        let y1 = ((hi.1 + pad).ceil().max(0.0) as u32 + 1).min(size.1);
+        (x0 < x1 && y0 < y1).then_some(Tile { x0, y0, x1, y1 })
     }
-    fn intersect(self, _other: Option<Tile>) -> Option<Tile> {
-        unimplemented!("R-0006: Tile::intersect")
+
+    fn intersect(self, other: Option<Tile>) -> Option<Tile> {
+        let o = other?;
+        let t = Tile {
+            x0: self.x0.max(o.x0),
+            y0: self.y0.max(o.y0),
+            x1: self.x1.min(o.x1),
+            y1: self.y1.min(o.y1),
+        };
+        (t.x0 < t.x1 && t.y0 < t.y1).then_some(t)
     }
+
     fn area(self) -> usize {
-        unimplemented!("R-0006: Tile::area")
+        (self.x1 - self.x0) as usize * (self.y1 - self.y0) as usize
     }
-    fn offset(self, _x: u32, _y: u32) -> usize {
-        unimplemented!("R-0006: Tile::offset")
+
+    /// Row-major offset **within the tile**, not the canvas.
+    fn offset(self, x: u32, y: u32) -> usize {
+        (y - self.y0) as usize * (self.x1 - self.x0) as usize + (x - self.x0) as usize
     }
 }
 
@@ -333,12 +507,22 @@ mod tests {
         let p = |x: f64, y: f64| Pt2 { x, y };
 
         let mut out = Vec::new();
-        push_segments(&Prim2::Point { at: p(1.0, 2.0), style }, id, &mut out);
+        push_segments(
+            &Prim2::Point {
+                at: p(1.0, 2.0),
+                style,
+            },
+            id,
+            &mut out,
+        );
         assert_eq!(out, vec![((1.0, 2.0), (1.0, 2.0))], "a point is degenerate");
 
         out.clear();
         push_segments(
-            &Prim2::Polyline { points: vec![p(0.0, 0.0)], style },
+            &Prim2::Polyline {
+                points: vec![p(0.0, 0.0)],
+                style,
+            },
             id,
             &mut out,
         );
@@ -346,7 +530,10 @@ mod tests {
 
         out.clear();
         push_segments(
-            &Prim2::Polyline { points: vec![p(0.0, 0.0), p(1.0, 0.0), p(1.0, 1.0)], style },
+            &Prim2::Polyline {
+                points: vec![p(0.0, 0.0), p(1.0, 0.0), p(1.0, 1.0)],
+                style,
+            },
             id,
             &mut out,
         );

@@ -13,10 +13,10 @@
 mod camera;
 mod ease;
 mod object;
+pub mod ppm;
 mod prim;
 mod record;
 mod scene;
-pub mod ppm;
 pub mod sink;
 pub mod svg;
 mod track;

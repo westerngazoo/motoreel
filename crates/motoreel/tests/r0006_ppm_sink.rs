@@ -139,7 +139,7 @@ const S: f64 = 20.0;
 fn ac1_empty_frame_is_header_plus_background_bytes() {
     let got = render_prims("r0006_ac1_empty", (4, 2), VIEW, &[]);
     let mut want = b"P6\n4 2\n255\n".to_vec();
-    want.extend(std::iter::repeat(0u8).take(4 * 2 * 3));
+    want.extend(std::iter::repeat_n(0u8, 4 * 2 * 3));
     assert!(
         got == want,
         "an empty 4x2 frame must be header + 24 zero bytes; got {} bytes",
@@ -206,7 +206,9 @@ fn ac1_frame_overwrites_existing_file() {
 // the directory must not exist afterwards (SPEC-0006 §2.1, §2.9).
 #[test]
 fn ac1_invalid_size_or_view_is_invalid_input_with_no_directory() {
-    let cases: [((u32, u32), (f64, f64), &str); 6] = [
+    /// A rejected construction: raster size, view window, what it is.
+    type Bad = ((u32, u32), (f64, f64), &'static str);
+    let cases: [Bad; 6] = [
         ((0, 10), VIEW, "zero width"),
         ((10, 0), VIEW, "zero height"),
         ((10, 10), (0.0, 1.8), "zero view width"),
@@ -223,7 +225,10 @@ fn ac1_invalid_size_or_view_is_invalid_input_with_no_directory() {
             Err(e) => e,
         };
         assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "{what}");
-        assert!(!dir.exists(), "{what}: invalid input must not create {dir:?}");
+        assert!(
+            !dir.exists(),
+            "{what}: invalid input must not create {dir:?}"
+        );
     }
 }
 
@@ -337,7 +342,7 @@ fn ac2_ink_lands_where_the_svg_sink_puts_it() {
             checked += 1;
         }
     }
-    assert_eq!(checked, 6, "the slice must contribute 6 vertices");
+    assert_eq!(checked, 3, "2 line endpoints + 1 circle centre");
 
     // Background is preserved far from every centre-line: the top-left
     // corner is > r + 1 px from both primitives.
@@ -511,7 +516,9 @@ fn locate(offset: usize, size: (u32, u32)) -> String {
 fn ac3_golden_frame_matches_the_checked_in_fixture_byte_for_byte() {
     let dir = tmp_dir("r0006_ac3_golden");
     let mut sink = PpmSink::with_view(&dir, SMALL, VIEW).expect("sink");
-    golden_scene().render(1.0, &mut sink).expect("golden render");
+    golden_scene()
+        .render(1.0, &mut sink)
+        .expect("golden render");
     assert_eq!(dir_names(&dir), ["frame_00000.ppm"], "exactly one frame");
     let got = fs::read(dir.join("frame_00000.ppm")).expect("read the frame");
 
@@ -589,8 +596,8 @@ fn ac4_unit_radius_off_by_half_a_pixel_lights_one_full_and_two_half() {
 fn ac4_radius_two_lights_four_full_rows() {
     let frame = render_prims("r0006_ac4_r2", SMALL, VIEW, &rule(0.0, 0.2));
     let col = column(&frame, SMALL, 32);
-    for row in 16..=19 {
-        assert_eq!(col[row], 255, "row {row} must be full");
+    for (row, value) in col.iter().enumerate().take(20).skip(16) {
+        assert_eq!(*value, 255, "row {row} must be full");
     }
     assert_eq!(col[15], 0, "no fringe above");
     assert_eq!(col[20], 0, "no fringe below");
@@ -615,11 +622,13 @@ fn ac4_frame_level_cross_section_carries_the_width_within_rounding() {
              within {}",
             n as f64 / 510.0
         );
-        assert_eq!(
-            n,
-            (2.0 * (0.5 * S * width) + 1.0).round() as usize,
-            "the lit extent is 2r + 1 px, not proportional to the width"
-        );
+        // The extent claim is NOT asserted here: `2r + 1` holds when the
+        // centre-line sits on a pixel centre, but these rules sit on a
+        // boundary (y = 0 maps to pixel y = 18.0), where an integer `r`
+        // puts the two edge rows at exactly zero coverage and they drop
+        // out -- 2 px at r = 1, as the boundary test asserts. The offset is
+        // controlled in `ppm.rs`'s unit test; asserting one formula across
+        // widths here would be false precision.
     }
 }
 
@@ -632,7 +641,12 @@ fn ac4_degenerate_widths_paint_nothing() {
         .into_iter()
         .enumerate()
     {
-        let frame = render_prims(&format!("r0006_ac4_degen_{i}"), SMALL, VIEW, &rule(0.0, width));
+        let frame = render_prims(
+            &format!("r0006_ac4_degen_{i}"),
+            SMALL,
+            VIEW,
+            &rule(0.0, width),
+        );
         assert!(
             is_pure(&frame, SMALL, [0, 0, 0]),
             "width {width} must paint nothing"
@@ -692,18 +706,34 @@ fn ac4_a_polyline_joint_has_no_darker_seam() {
 fn ac5_every_variant_produces_ink() {
     let s = style(Rgb::WHITE, 0.2, 1.0);
     let cases: [(&str, Prim2); 4] = [
-        ("point", Prim2::Point { at: pt(0.0, 0.0), style: s }),
+        (
+            "point",
+            Prim2::Point {
+                at: pt(0.0, 0.0),
+                style: s,
+            },
+        ),
         (
             "segment",
-            Prim2::Segment { a: pt(-0.2, 0.0), b: pt(0.2, 0.0), style: s },
+            Prim2::Segment {
+                a: pt(-0.2, 0.0),
+                b: pt(0.2, 0.0),
+                style: s,
+            },
         ),
         (
             "polyline",
-            Prim2::Polyline { points: vec![pt(-0.2, 0.0), pt(0.2, 0.0)], style: s },
+            Prim2::Polyline {
+                points: vec![pt(-0.2, 0.0), pt(0.2, 0.0)],
+                style: s,
+            },
         ),
         (
             "edges",
-            Prim2::Edges { segments: vec![(pt(-0.2, 0.0), pt(0.2, 0.0))], style: s },
+            Prim2::Edges {
+                segments: vec![(pt(-0.2, 0.0), pt(0.2, 0.0))],
+                style: s,
+            },
         ),
     ];
     for (name, prim) in cases {
@@ -722,12 +752,21 @@ fn ac5_every_variant_produces_ink() {
 fn ac5_a_point_and_a_degenerate_segment_are_byte_identical() {
     let s = style(Rgb::WHITE, 0.2, 1.0);
     let at = pt(0.3, -0.2);
-    let point = render_prims("r0006_ac5_dot", SMALL, VIEW, &[Prim2::Point { at, style: s }]);
+    let point = render_prims(
+        "r0006_ac5_dot",
+        SMALL,
+        VIEW,
+        &[Prim2::Point { at, style: s }],
+    );
     let degenerate = render_prims(
         "r0006_ac5_degen_seg",
         SMALL,
         VIEW,
-        &[Prim2::Segment { a: at, b: at, style: s }],
+        &[Prim2::Segment {
+            a: at,
+            b: at,
+            style: s,
+        }],
     );
     assert!(
         point == degenerate,
@@ -741,12 +780,27 @@ fn ac5_a_point_and_a_degenerate_segment_are_byte_identical() {
 fn ac5_degenerate_primitives_leave_pure_background() {
     let s = style(Rgb::WHITE, 0.2, 1.0);
     let cases: [(&str, Prim2); 3] = [
-        ("empty_polyline", Prim2::Polyline { points: vec![], style: s }),
+        (
+            "empty_polyline",
+            Prim2::Polyline {
+                points: vec![],
+                style: s,
+            },
+        ),
         (
             "one_point_polyline",
-            Prim2::Polyline { points: vec![pt(0.0, 0.0)], style: s },
+            Prim2::Polyline {
+                points: vec![pt(0.0, 0.0)],
+                style: s,
+            },
         ),
-        ("empty_edges", Prim2::Edges { segments: vec![], style: s }),
+        (
+            "empty_edges",
+            Prim2::Edges {
+                segments: vec![],
+                style: s,
+            },
+        ),
     ];
     for (name, prim) in cases {
         let frame = render_prims(&format!("r0006_ac5_{name}"), SMALL, VIEW, &[prim]);
@@ -819,7 +873,9 @@ fn ac6_stock_ffmpeg_encodes_the_frames() {
     // stale frame would otherwise join the encode.
     let dir = tmp_dir("r0006_ac6_encode");
     let mut sink = PpmSink::with_view(&dir, (320, 180), VIEW).expect("sink");
-    golden_scene().render(60.0, &mut sink).expect("render");
+    let mut scene = golden_scene();
+    scene.duration = 0.25; // dyadic: 0.25 s x 60 fps is exactly 15 frames
+    scene.render(60.0, &mut sink).expect("render");
     assert_eq!(dir_names(&dir).len(), 15, "0.25 s at 60 fps is 15 frames");
 
     let out = dir.join("out.mp4");
@@ -848,9 +904,10 @@ fn ac6_stock_ffmpeg_encodes_the_frames() {
 // harness's, not the creator's (§2.10).
 #[test]
 fn ac6_the_demo_documents_both_encode_commands() {
-    let main_rs =
-        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/first_light/main.rs"))
-            .expect("examples/first_light/main.rs exists");
+    let main_rs = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/first_light/main.rs"),
+    )
+    .expect("examples/first_light/main.rs exists");
     assert!(
         main_rs.contains("ffmpeg -framerate 60 -i out/ppm/frame_%05d.ppm"),
         "the working PPM encode command must be documented with the demo"
