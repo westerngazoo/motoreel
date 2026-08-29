@@ -39,3 +39,5 @@ field. The build order across requirements and specs is in
 | [SPEC-0002](0002-scene-camera.md) | Scene, objects, motor camera, projection | R-0002 | Implemented — owner acceptance pending |
 | [SPEC-0003](0003-svg-sink.md) | `FrameSink`/`SvgSink` + first-light demo | R-0003 | Implemented — owner acceptance pending |
 | [SPEC-0004](0004-physics-playback.md) | Rollout recording, wireframe edges, tumbling box | R-0004 | Implemented — owner acceptance pending |
+| [SPEC-0006](0006-ppm-sink.md) | `PpmSink`: P6 raster frames + stroke rasterizer | R-0006 | Draft — architect-reviewed, findings applied |
+| [SPEC-0007](0007-anchored-labels.md) | Anchored text labels, both sinks | R-0007 | Draft — architect-reviewed, findings applied |

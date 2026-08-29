@@ -148,9 +148,7 @@ impl Track {
     /// Set every span's ease — the whole-track convenience.
     #[must_use]
     pub fn ease(mut self, ease: Ease) -> Track {
-        for e in &mut self.eases {
-            *e = ease;
-        }
+        self.eases.fill(ease);
         self
     }
 
