@@ -160,8 +160,11 @@ impl Canvas {
     /// inherits a pixel from its predecessor.
     fn clear(&mut self) {
         let bg = [self.background.r, self.background.g, self.background.b];
-        for px in self.pixels.chunks_exact_mut(3) {
-            px.copy_from_slice(&bg);
+        // `as_chunks_mut` over `chunks_exact_mut(3)`: the buffer is
+        // exactly `w·h·3` bytes, so the remainder is provably empty and
+        // the array form says so in the type.
+        for px in self.pixels.as_chunks_mut::<3>().0 {
+            *px = bg;
         }
     }
 
