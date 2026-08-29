@@ -1,0 +1,62 @@
+# The constitution calls test, lint and format-check "a hard merge gate"
+# (CLAUDE.md §5, project-specifics.md). Until now nothing enforced it —
+# the gate was a sentence, not a check. This is the check.
+#
+# The ffmpeg step is not incidental: R-0006 exists because the encode
+# command motoreel documented did not work on an ordinary machine. A CI
+# runner *is* an ordinary machine, so AC6 running here for real — rather
+# than skipping — is the claim being verified on a box nobody tuned.
+name: checks
+on: [push, pull_request]
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: motoreel
+      # garust is a sibling path dependency (crates/motoreel/Cargo.toml).
+      - uses: actions/checkout@v4
+        with:
+          repository: westerngazoo/garust
+          path: garust
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      # AC6's two probes skip when ffmpeg is absent; installing it makes
+      # them run, so the encode path is exercised end to end.
+      - name: ffmpeg, so R-0006 AC6 runs instead of skipping
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+
+      - name: tests
+        working-directory: motoreel
+        run: cargo test --workspace
+
+      - name: lints
+        working-directory: motoreel
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      # Scoped to the package on purpose: `--all` follows the garust path
+      # dependency and reformats it under the wrong config
+      # (project-specifics.md).
+      - name: format
+        working-directory: motoreel
+        run: cargo fmt -p motoreel --check
+
+      # A skip here would be a false pass: the runner has ffmpeg, so if
+      # the probe still skipped, the probe is broken and R-0006's central
+      # claim went unverified. `pipefail` because a pipe otherwise hides
+      # cargo's exit code — the failure mode this gate exists to catch.
+      - name: AC6 encoded for real, and did not skip
+        working-directory: motoreel
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test -p motoreel --test r0006_ppm_sink ac6_stock_ffmpeg \
+            -- --nocapture 2>&1 | tee /tmp/ac6.txt
+          if grep -q "AC6 skipped" /tmp/ac6.txt; then
+            echo "AC6 skipped on a runner that has ffmpeg — the probe is wrong"
+            exit 1
+          fi
