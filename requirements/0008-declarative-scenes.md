@@ -1,6 +1,6 @@
 # R-0008 — Declarative scenes: a video without writing Rust
 
-- **Status:** Draft — for discussion
+- **Status:** Accepted (2026-08-29) — surface decided; format decided
 - **Milestone:** MC (the creator pipeline) — its final requirement
 - **Owner:** Gustavo Delgadillo (westerngazoo)
 - **Created:** 2026-08-27
@@ -52,8 +52,6 @@ crate against a path dependency on garust.
 
 ## 3. Acceptance criteria
 
-*(Draft — to be settled in discussion, then made testable.)*
-
 - **AC1 — a scene is data.** A scene file in the chosen format renders to
   frames with no Rust written by the creator, and the same file renders
   byte-identically on a second run.
@@ -69,7 +67,8 @@ crate against a path dependency on garust.
 - **AC4 — errors name the mistake and the place.** A malformed scene
   reports what is wrong and where, and writes no frames. A misspelled
   field is an error, never a silently ignored one.
-- **AC5 — it runs without a Rust toolchain.** *(Contingent on Q4.)*
+- **AC5 — struck.** *(Was: "it runs without a Rust toolchain." Q4 records
+  why this is not delivered here rather than letting it look delivered.)*
 - **AC6 — the demo is a scene file.** At least one shipped example is
   authored in the format rather than in Rust, and its output is asserted
   against a golden.
@@ -88,37 +87,112 @@ crate against a path dependency on garust.
 
 ## 5. Open questions
 
-These are the discussion. Nothing below is decided.
-
-- **Q1 — What is the format?** TOML reads best for humans and needs a
-  parser dependency. JSON matches physics-lab's `lesson.json` precedent
-  and also needs one (or a hand-written reader, as the wasm C-ABI was
-  hand-written to avoid `wasm-bindgen`). A bespoke line format needs no
-  dependency and no ecosystem either.
-- **Q2 — What drives it?** A `motoreel render scene.toml` CLI in this
-  crate, or a library entry point that a front end calls?
-- **Q3 — Is there a Python front end?** The evidence in §2 points at
-  Python as the language the audience — and the owner — actually writes.
-  A thin Python package that emits the scene file would meet people where
-  they are without putting Python in the engine. In scope here, or its
-  own requirement?
-- **Q4 — How does a creator get the binary?** "Without writing Rust"
-  still means installing Rust to `cargo build` unless something is
-  released. Tagged release binaries, or is a toolchain an acceptable
-  prerequisite for now? This is the difference between a real answer to
-  the audience decision and a partial one.
-- **Q5 — Does the format cover physics (R-0004 `record`)?** Naming a
-  rigid body, an initial twist and a duration is a different vocabulary
-  from naming keyframes. In scope, or M2's business?
-- **Q6 — Units and angles.** τ is the house circle constant. Does a scene
-  file say `turns = 0.25`, `tau = 0.25`, or `degrees = 90`?
+- **Q1 — What is the format?** **Settled: a line-oriented format with a
+  hand-written reader, no dependency.** The owner chose "a data file the
+  engine reads" (2026-08-29), which leaves only *which* file. TOML and
+  JSON both need a parser crate, and the crate's dependency graph is
+  `garust` alone — asserted by a test in R-0003, R-0006 and R-0007, and
+  changing it is an owner decision this requirement does not need to
+  spend. The house has already answered this shape three times: the wasm
+  C-ABI hand-written rather than `wasm-bindgen`, the SVG template pinned
+  rather than generated, the R-0006 rasterizer written in `std`. A format
+  we define is also a format we can make trivially parseable and
+  precisely diagnosable, which AC4 needs. See SPEC-0008 §2 for the
+  grammar.
+- **Q2 — What drives it?** **Settled: both.** A library entry point does
+  the work; a thin `motoreel` binary in the same crate calls it, so the
+  CLI is a shell and a front end can skip it.
+- **Q3 — Is there a Python front end?** **Deferred to its own
+  requirement.** The owner's choice scopes R-0008 to the file. A Python
+  package that emits it is additive, needs nothing from the engine, and
+  should not gate this.
+- **Q4 — How does a creator get the binary?** **Open — the honest gap.**
+  "Without writing Rust" still means installing Rust to `cargo build`
+  unless something is released. R-0008 does not close this, and AC5 is
+  therefore struck rather than quietly claimed. Recorded so the shortfall
+  is visible instead of implied.
+- **Q5 — Does the format cover physics (R-0004 `record`)?** **Not in
+  R-0008.** Naming a body, an inertia and an initial twist is a different
+  vocabulary from naming keyframes, and R-0005 has not been specced. The
+  grammar must leave room for a `body` verb without a breaking change —
+  a constraint on the design, checked in SPEC-0008.
+- **Q6 — Units and angles.** **Settled: turns.** τ is the house circle
+  constant, so a quarter turn is `turn = 0.25`. `degrees` is accepted as
+  an alternate spelling on the same field set, because a teacher writing
+  `degrees = 90` should not have to know what τ is to get started. Both
+  are exact for the dyadic cases the goldens use.
 
 ## 6. Decision log
 
 | Date | Decision | Rationale |
 |------|----------|-----------|
 | 2026-08-27 | Drafted for discussion; §2's evidence gathered from the owner's own production repo rather than assumed | The audience decision was made on 2026-08-27 without data; there is now data, and it supports the decision more strongly than the reasoning that produced it |
+| 2026-08-29 | **The surface is a data file the engine reads**, not a Python front end (owner) | The file is the engine's contract and is testable on its own; ergonomic front ends can be layered on it later without the engine growing a second authoring path to keep working |
+| 2026-08-29 | Format is a line-oriented grammar with a hand-written reader; **no new dependency** | Keeps the garust-only graph three requirements already assert, so no dependency-policy decision is spent here. Matches the house's three existing hand-written-over-dependency calls, and a format we define is one we can make precisely diagnosable — which AC4 requires |
+| 2026-08-29 | Angles are **turns**, with `degrees` as an accepted alternate spelling | τ is the house constant, so `turn = 0.25` is the native form; but a teacher should not need to know that to write their first scene, and both are exact on the dyadic cases |
+| 2026-08-29 | AC5 struck rather than kept as aspirational (Q4) | A creator still needs a Rust toolchain to build the binary. Keeping the criterion would let the requirement claim a reach it does not deliver |
 
 ## Changelog
 
 - 2026-08-27 — created, Draft, for discussion.
+- 2026-08-29 — Accepted. Q1, Q2, Q3, Q5, Q6 settled; Q4 left open and AC5
+  struck so the shortfall stays visible. History appended, not rewritten.
+
+## Appendix — the proposed surface
+
+Not normative; SPEC-0008 pins the grammar. Included here so the decision in
+§5 Q1 can be judged on how it reads rather than on how it is described.
+This is the shipped `labelled_lab` demo, which today is a Rust file.
+
+```
+# labelled_lab.scene — the three anchor kinds on one screw motion.
+# Every line is `verb [name] key=value ...`. No nesting, no indentation
+# rules, no quoting except around text. A bad line names itself.
+
+scene   duration=4 fps=60 view=3.2,1.8 size=1920,1080
+sink    ppm dir=out/lab
+camera  pinhole at=0,0,6 focal=2
+
+# ---- geometry -------------------------------------------------------
+object  square shape=polyline stroke=#ffffff width=0.02
+points  square  -0.5,-0.5  0.5,-0.5  0.5,0.5  -0.5,0.5  -0.5,-0.5
+
+# One full turn about z while rising 2. Authored as quarter turns because
+# a full turn in one key is antipodal — the engine says so if you try.
+key     square t=0
+key     square t=1 turn=0.25 axis=z rise=0.5
+key     square t=2 turn=0.50 axis=z rise=1.0
+key     square t=3 turn=0.75 axis=z rise=1.5
+key     square t=4 turn=1.00 axis=z rise=2.0
+
+# ---- labels ---------------------------------------------------------
+# pinned to the frame
+label   title  text="SCREW MOTION" screen=top-centre align=center \
+        offset=0,-0.22 size=0.12 stroke=#ffffff
+
+label   note   text="one turn about z while rising 2" screen=bottom-left \
+        offset=0.06,0.10 size=0.07 stroke=#00b4d8
+
+# pinned to the body's own model space — rides the motion, no bookkeeping
+label   rider  text="body" on=square at=0,0.75 align=center \
+        size=0.09 stroke=#ff4d00
+```
+
+Shape decisions visible in it, each of which SPEC-0008 must justify:
+
+- **Every line is `verb [name] key=value ...`.** Flat: no nesting, no
+  indentation significance, no block delimiters. A parse error can always
+  name a line and a key, which is what AC4 asks for.
+- **Geometry is a separate `points` line** rather than a field, because a
+  vertex list is the one thing that does not fit on one line.
+- **Angles are turns** (§5 Q6). `turn=0.25` is a quarter turn; `degrees=90`
+  is the same thing for someone who has not met τ yet.
+- **`turn`/`axis`/`rise` together are a screw**, which is the motion
+  motoreel exists to make exact. `rise` is along `axis`, so the rotation
+  and the translation commute and the key is exact.
+- **The full-turn trap is surfaced, not hidden.** `turn=1` in a single span
+  is antipodal; SPEC-0003 §2.7 already records this and the demo already
+  works around it. The reader must reject it with that explanation rather
+  than silently rendering the short way round.
+- **Line continuation with a trailing backslash**, so a long label does not
+  force a nested form on the other 95% of lines.
