@@ -109,7 +109,8 @@ fn pixel(frame: &[u8], size: (u32, u32), x: u32, y: u32) -> [u8; 3] {
 /// ACs use for a frame that must carry no ink at all.
 fn is_pure(frame: &[u8], size: (u32, u32), background: [u8; 3]) -> bool {
     let head = header_for(size).len();
-    frame[head..].chunks_exact(3).all(|p| p == background)
+    let pixels = frame[head..].as_chunks::<3>().0;
+    pixels.iter().all(|p| *p == background)
 }
 
 fn style(stroke: Rgb, width: f64, alpha: f64) -> Style {
@@ -322,7 +323,7 @@ fn ac2_ink_lands_where_the_svg_sink_puts_it() {
         } else {
             continue;
         };
-        for xy in coords.chunks_exact(2) {
+        for xy in coords.as_chunks::<2>().0 {
             let (u, v) = (
                 f64::from(SMALL.0) / 2.0 + S * xy[0],
                 f64::from(SMALL.1) / 2.0 - S * xy[1],

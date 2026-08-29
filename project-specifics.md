@@ -36,6 +36,25 @@ The concrete commands referenced by `CLAUDE.md` §6 and by the `architect` and
 - **Format-check command:** `cargo fmt -p motoreel --check` *(scoped per package —
   `--all` follows the garust path dependency and formats it under the wrong
   config; add new workspace members to this command as they appear)*
+- **Run the gate under CI's toolchain, not just the default one.** CI uses
+  `dtolnay/rust-toolchain@stable`. A machine sitting a few releases behind
+  cannot see the lints stable has since added, so a locally green gate can
+  still fail the merge — which happened on the gate's own first run
+  (`chunks_exact_to_as_chunks` and `manual_slice_fill`, neither visible on
+  1.95). rustfmt drifts the same way, in both directions. Prefix each
+  command to check the way CI will:
+
+  ```bash
+  rustup toolchain install stable --component clippy --profile minimal
+  rustup run stable cargo test --workspace
+  rustup run stable cargo clippy --workspace --all-targets -- -D warnings
+  rustup run stable cargo fmt -p motoreel --check
+  ```
+
+  Deliberately not pinned via `rust-toolchain.toml`: a pin makes local and
+  CI agree but lets lint debt accumulate silently until someone bumps it,
+  which is how a sibling repo arrived at 370 hunks of formatting drift
+  against its own pinned toolchain.
 
 ## Domain notes
 
