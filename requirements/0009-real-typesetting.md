@@ -1,6 +1,6 @@
 # R-0009 — Real typesetting
 
-- **Status:** Draft
+- **Status:** **Accepted** (2026-09-20, owner) — stage 1 wired; SPEC-0009 still to be written
 - **Milestone:** MC (the creator pipeline)
 - **Owner:** Gustavo Delgadillo (westerngazoo)
 - **Created:** 2026-09-20
@@ -73,11 +73,29 @@ coverage, not a stroke. The primitive vocabulary has to grow.
   `t` ⇒ byte-identical frames. Rasterization is deterministic, with no
   dependence on iteration order or floating-point accumulation across
   runs.
-- **AC7. The core stays thin.** The typesetter is its own crate. The
-  `motoreel` crate's runtime dependency graph gains nothing; only the
-  sink that rasterizes pays for the font machinery.
+- **AC7. The kernel stays thin.** The typesetter is its own crate and
+  `motoreel` takes it as an **optional** dependency behind the `text`
+  feature, so `cargo build -p motoreel --no-default-features` is still the
+  single-dependency kernel `project-specifics.md` promises. Both
+  configurations build, lint and test.
+
+  > **Correction.** This criterion first read "the `motoreel` crate's
+  > runtime dependency graph gains nothing", justified by "its consumers
+  > include lessons compiled to wasm". **That justification was false and
+  > I had not checked it.** `physics-lab`'s lessons depend on
+  > `lessons-common` and `garust`, not on `motoreel`; measured with
+  > `grep -rn motoreel physics-lab/lessons/*/crate/Cargo.toml`, which
+  > returns nothing. motoreel's only consumer is `guion-video-creator`,
+  > and it needs text. The separate crate is still right — the typesetter
+  > is independently testable and the core modules stay font-free — but
+  > the graph does gain an edge by default, and the honest guarantee is
+  > the one above: a kernel build that a gate keeps true.
 - **AC8. Licences travel.** Every embedded face ships its licence file,
   and a test fails if a face is embedded without one.
+
+  > **Not yet exercised.** Stage 1 embeds no face: a caller supplies font
+  > bytes. The criterion stands for when one is embedded, and saying so is
+  > better than a test that passes because there is nothing to check.
 
 ## 4. Constraints & non-goals
 
@@ -119,3 +137,7 @@ coverage, not a stroke. The primitive vocabulary has to grow.
 | 2026-09-20 | Own crate, not a module | `motoreel` depends on `garust` alone today. A font rasterizer in the core would be inherited by every consumer, wasm lessons included. In its own crate only the rasterizing sink pays |
 | 2026-09-20 | Box tree from day one, though stage 1 builds only rows | Designing "a line of text" now means rewriting it for the first fraction. Width/height/depth is TeX's model and it holds both |
 | 2026-09-20 | Missing glyph is an error, amending R-0007 AC8 | The silent `'?'` is the defect's own camouflage. It shipped «b?ceps» and nothing complained |
+| 2026-09-20 | The 5 × 7 face and its specimen fixture are **deleted**, not kept as a fallback | A fallback face is a silent `'?'` wearing a hat: the render would succeed with the wrong glyphs. Six R-0007 tests pinned its geometry and went with it; what they protected is re-asserted against real type in `tests/r0009_real_type.rs` |
+| 2026-09-20 | `Label`/`Prim2::Text` carry `face: usize`, a plain index | A typed `FaceId` would put the typesetter in the core's public types. An index into a caller-owned registry keeps the kernel free of it and still lets one piece mix a display face with a mathematics face |
+| 2026-09-20 | A sink with no registry, or an unregistered index, **errors** | Both are places where "draw nothing" was available and would have been the same defect in a new costume |
+| 2026-09-20 | AC7's justification was wrong and is corrected above, not quietly reworded | I asserted that wasm lessons depend on motoreel without checking. They do not. The rule of this project is that a claim carries its measurement |

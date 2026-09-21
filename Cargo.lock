@@ -141,6 +141,7 @@ name = "motoreel"
 version = "0.0.0"
 dependencies = [
  "garust",
+ "motoreel-typeset",
  "proptest",
 ]
 

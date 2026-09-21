@@ -124,12 +124,23 @@ pub enum Prim2 {
     Text {
         /// Image position of the alignment point, on the text baseline.
         at: Pt2,
-        /// The line to draw: printable ASCII, one line, no markup.
+        /// The line to draw: one line, any text the chosen face covers,
+        /// no markup.
+        ///
+        /// The ASCII restriction this field used to carry was removed by
+        /// R-0009. It was not a rendering limit: it was applied at eval,
+        /// upstream of both sinks, so the SVG sink — which emits `<text>`
+        /// and lets the consumer's font engine work — was handed
+        /// pre-destroyed text for months and drew «b?ceps».
         text: String,
         /// Em height in image units. Contract: finite and > 0.
         size: f64,
         /// Horizontal placement of `at` relative to the run.
         align: Align,
+        /// Which registered face to set this in: an index into the
+        /// registry the sink was built with. A plain `usize`, not a typed
+        /// id, so the core keeps no font dependency of its own.
+        face: usize,
         /// Fill colour and opacity; [`Style::width`] is unused for text.
         style: Style,
     },

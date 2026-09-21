@@ -12,7 +12,6 @@
 
 mod camera;
 mod ease;
-mod font;
 pub mod label;
 mod object;
 pub mod ppm;

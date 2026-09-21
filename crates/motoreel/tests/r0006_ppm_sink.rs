@@ -984,13 +984,22 @@ fn section_keys(manifest: &str, section: &str) -> Vec<String> {
     keys
 }
 
-// AC7 — the rasterizer is `std` arithmetic and `Vec<u8>`: the dependency
-// graph is unchanged.
+// AC7 — the STROKE rasterizer is still `std` arithmetic and `Vec<u8>`.
+// R-0009 added a typesetter for the text path, behind an optional feature,
+// so the graph this criterion described is still what
+// `--no-default-features` builds.
 #[test]
-fn ac7_zero_new_dependencies() {
+fn ac7_the_stroke_rasterizer_adds_no_dependency() {
     let manifest = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml"))
         .expect("read the crate manifest");
-    assert_eq!(section_keys(&manifest, "dependencies"), ["garust"]);
+    assert_eq!(
+        section_keys(&manifest, "dependencies"),
+        ["garust", "motoreel-typeset"]
+    );
+    assert!(
+        manifest.contains("optional = true"),
+        "the typesetter must be optional"
+    );
     assert_eq!(section_keys(&manifest, "dev-dependencies"), ["proptest"]);
     assert!(!manifest.contains("[build-dependencies]"), "no build deps");
     assert!(

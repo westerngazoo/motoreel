@@ -1,6 +1,6 @@
 # R-0007 — Anchored text labels
 
-- **Status:** **Met** (2026-08-27) — all eight AC verified; suite
+- **Status:** **Met** (2026-08-27), **AC8 amended by R-0009** (2026-09-20) — all eight AC verified; suite
   mutation-tested across label.rs, ppm.rs, svg.rs and font.rs
 - **Milestone:** MC (the creator pipeline)
 - **Owner:** Gustavo Delgadillo (westerngazoo)
@@ -64,8 +64,15 @@ scope below keeps it from becoming a typesetting project.
   the same anchor positions, deterministically.
 - **AC7.** Determinism end to end: same scene and `t` ⇒ byte-identical
   frames from both sinks.
-- **AC8.** Text is ASCII-only, and the behaviour for non-ASCII input is
-  documented and total (no panic, no silent corruption).
+- **AC8.** ~~Text is ASCII-only, and the behaviour for non-ASCII input is
+  documented and total (no panic, no silent corruption).~~
+  **Amended by R-0009 (2026-09-20).** The "documented and total" half
+  stands. The ASCII half is gone, and with it the `'?'` substitution that
+  satisfied "no silent corruption" on a technicality: the substitution was
+  documented, so it was not silent — but it *was* corruption, and it
+  rendered «¿POR QUÉ TANTO?» as «?POR QU? TANTO?» across the catalogue
+  while every gate reported success. A character the face cannot draw is
+  now an error that names it.
 
 ## 4. Constraints & non-goals
 

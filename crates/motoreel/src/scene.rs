@@ -98,9 +98,13 @@ impl Scene {
             }
             prims.push(Prim2::Text {
                 at,
-                text: crate::label::to_ascii(&label.text),
+                // Verbatim. The substitution that used to happen here is
+                // what R-0009 removed: it ran upstream of both sinks, so
+                // even the one that could write Spanish never got to.
+                text: label.text.clone(),
                 size: label.size,
                 align: label.align,
+                face: label.face,
                 style: label.style,
             });
         }

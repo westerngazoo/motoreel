@@ -6,9 +6,21 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+# On by default because motoreel's only consumer -- guion-video-creator --
+# needs to write text, and a build that cannot is not the explanatory
+# engine this project says it is. Off, the crate is the bare kernel with
+# `garust` as its single dependency, which is the discipline
+# `project-specifics.md` states; `PpmSink` then refuses a text primitive
+# instead of drawing nothing. CI builds both ways so the claim stays true.
+default = ["text"]
+text = ["dep:motoreel-typeset"]
+
 [dependencies]
 # Path dep during development; garust gains capabilities upstream as needed.
 garust = { path = "../../../garust", features = ["physics"] }
+# Real type (R-0009). Optional: see the `text` feature above.
+motoreel-typeset = { path = "../motoreel-typeset", optional = true }
 
 [dev-dependencies]
 # Property-based acceptance tests (R-0001); dev-only, so the normal
