@@ -1,0 +1,13 @@
+@startuml
+title motoreel — secuencia principal
+
+participant "Scene" as Scene0
+participant "Keyframe path" as Keyframepath1
+participant "Physics path" as Physicspath2
+participant "Render" as Render3
+
+Scene0 -> Keyframepath1: Insert motor keyframes + `Ease` → interpolate via garust slerp.
+Keyframepath1 -> Physicspath2: Run `garust-physics` → `record()` → same track render walk.
+Physicspath2 -> Render3: Walk timeline → project through camera → write SVG/PPM via `FrameSink`.
+
+@enduml

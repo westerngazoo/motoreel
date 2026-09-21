@@ -33,9 +33,10 @@ The concrete commands referenced by `CLAUDE.md` §6 and by the `architect` and
 - **Build command:** `cargo build --workspace`
 - **Test command:** `cargo test --workspace`
 - **Lint command:** `cargo clippy --workspace --all-targets -- -D warnings`
-- **Format-check command:** `cargo fmt -p motoreel --check` *(scoped per package —
-  `--all` follows the garust path dependency and formats it under the wrong
-  config; add new workspace members to this command as they appear)*
+- **Format-check command:** `cargo fmt -p motoreel -p motoreel-typeset --check`
+  *(scoped per package — `--all` follows the garust path dependency and formats
+  it under the wrong config; add new workspace members to this command as they
+  appear)*
 - **Run the gate under CI's toolchain, not just the default one.** CI uses
   `dtolnay/rust-toolchain@stable`. A machine sitting a few releases behind
   cannot see the lints stable has since added, so a locally green gate can
@@ -48,7 +49,7 @@ The concrete commands referenced by `CLAUDE.md` §6 and by the `architect` and
   rustup toolchain install stable --component clippy --profile minimal
   rustup run stable cargo test --workspace
   rustup run stable cargo clippy --workspace --all-targets -- -D warnings
-  rustup run stable cargo fmt -p motoreel --check
+  rustup run stable cargo fmt -p motoreel -p motoreel-typeset --check
   ```
 
   Deliberately not pinned via `rust-toolchain.toml`: a pin makes local and
