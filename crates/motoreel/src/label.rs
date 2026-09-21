@@ -15,7 +15,13 @@ use crate::scene::ObjectId;
 /// A plain-text label anchored to the scene (R-0007).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Label {
-    /// Author text; normalized to printable ASCII at eval (§2.5).
+    /// Author text, carried to the sink verbatim.
+    ///
+    /// Until R-0009 this was "normalized to printable ASCII at eval",
+    /// which is how the engine came to render «¿POR QUÉ TANTO?» as
+    /// «?POR QU? TANTO?» without anything objecting — a `'?'` is a
+    /// perfectly good glyph. What the face cannot draw is now an error
+    /// from the sink, naming the character.
     pub text: String,
     /// What the label is pinned to.
     pub anchor: Anchor,
@@ -25,6 +31,10 @@ pub struct Label {
     pub size: f64,
     /// Horizontal placement of the anchor relative to the run.
     pub align: Align,
+    /// Which registered face to set this in — an index into the registry
+    /// the sink was built with. `0` is the default and is what a single-
+    /// face render uses.
+    pub face: usize,
     /// Fill colour and opacity; `width` is unused for text.
     pub style: Style,
 }
@@ -94,6 +104,7 @@ impl Label {
             offset: Pt2 { x: 0.0, y: 0.0 },
             size: 0.08,
             align: Align::Left,
+            face: 0,
             style: Style::default(),
         }
     }
@@ -126,10 +137,11 @@ impl Label {
         self
     }
 
-    /// Whether every character renders as authored — `false` when §2.5's
-    /// `'?'` substitution would fire. Pure; `eval` stays total.
-    pub fn is_ascii_renderable(&self) -> bool {
-        self.text.chars().all(is_renderable)
+    /// Set which registered face this label is drawn in.
+    #[must_use]
+    pub fn with_face(mut self, face: usize) -> Self {
+        self.face = face;
+        self
     }
 }
 
@@ -187,19 +199,4 @@ pub(crate) fn screen_point(anchor: ScreenAnchor, window: (f64, f64)) -> Pt2 {
         ScreenAnchor::BottomCentre => Pt2 { x: 0.0, y: -hh },
         ScreenAnchor::BottomRight => Pt2 { x: hw, y: -hh },
     }
-}
-
-/// Printable ASCII — the alphabet the face covers and the SVG escaper
-/// assumes.
-pub(crate) fn is_renderable(c: char) -> bool {
-    matches!(c, ' '..='~')
-}
-
-/// R-0007 AC8, total: every unrenderable `char` becomes exactly one `'?'`,
-/// so the run's length — and therefore its alignment and advance — is
-/// unchanged. Never drops, never panics (§2.5).
-pub(crate) fn to_ascii(text: &str) -> String {
-    text.chars()
-        .map(|c| if is_renderable(c) { c } else { '?' })
-        .collect()
 }

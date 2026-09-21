@@ -628,16 +628,26 @@ fn section_keys(manifest: &str, section: &str) -> Vec<String> {
     keys
 }
 
-// AC5 — zero new dependencies: the normal graph stays garust alone, the
-// dev graph proptest alone, and no build- or target-specific dependency
-// table exists. The documented ffmpeg invocation is recorded with the
-// demo. Nothing here (or anywhere in this suite) runs ffmpeg — encoding
-// stays outside the crate and outside CI.
+// AC5 — zero new dependencies, as amended by R-0009: the graph stays
+// garust alone **in the kernel**, and the typesetter R-0009 added is
+// optional, so `--no-default-features` still builds the crate this
+// criterion described. The dev graph is proptest alone, and no build- or
+// target-specific dependency table exists. The documented ffmpeg
+// invocation is recorded with the demo. Nothing here (or anywhere in this
+// suite) runs ffmpeg — encoding stays outside the crate and outside CI.
 #[test]
 fn ac5_zero_new_dependencies_and_recorded_ffmpeg_invocation() {
     let manifest = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml"))
         .expect("read the crate manifest");
-    assert_eq!(section_keys(&manifest, "dependencies"), ["garust"]);
+    assert_eq!(
+        section_keys(&manifest, "dependencies"),
+        ["garust", "motoreel-typeset"]
+    );
+    assert!(
+        manifest.contains("optional = true"),
+        "the typesetter must be optional, or the kernel is no longer \
+         one dependency"
+    );
     assert_eq!(section_keys(&manifest, "dev-dependencies"), ["proptest"]);
     assert!(
         !manifest.contains("[build-dependencies]"),

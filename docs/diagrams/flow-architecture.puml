@@ -1,0 +1,13 @@
+@startuml
+title motoreel — secuencia
+
+participant "S" as Scene
+participant "T" as Track Motor3
+participant "C" as Camera
+participant "F" as FrameSink
+S -> T: keyframes or physics record
+T -> C: pose at t
+C -> F: projected primitives
+F -> F: numbered frames → ffmpeg
+
+@enduml

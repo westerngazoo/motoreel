@@ -1,0 +1,13 @@
+[package]
+name = "motoreel-typeset"
+version = "0.0.0"
+description = "Real type for motoreel: proportional faces, a TeX-shaped box model, and measurement that never touches a pixel."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# The only runtime dependency, and the reason this is its own crate:
+# `motoreel` itself must keep a garust-only graph (R-0009 AC7). See
+# R-0009 OQ-2 for why `ab_glyph` over hand-rolling a scanline fill.
+ab_glyph = "0.2"

@@ -17,7 +17,6 @@ use std::fs;
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 
-use crate::font;
 use crate::prim::{Align, Prim2, Pt2, Rgb, Style};
 use crate::sink::FrameSink;
 
@@ -105,6 +104,9 @@ impl PpmSink {
                 pixels,
                 coverage: Vec::new(),
                 segments: Vec::new(),
+                #[cfg(feature = "text")]
+                fonts: None,
+                failed: None,
             },
         })
     }
@@ -118,6 +120,20 @@ impl PpmSink {
         self.canvas.background = background;
         self
     }
+
+    /// The faces this sink sets text in (R-0009).
+    ///
+    /// A `Prim2::Text` names its face by index into this registry. Without
+    /// one, a text primitive is an **error** from [`FrameSink::frame`] —
+    /// not a blank space, and not a `'?'`. That is the whole point: the
+    /// engine drew «b?ceps» for months because the quiet answer was
+    /// always available.
+    #[cfg(feature = "text")]
+    #[must_use]
+    pub fn with_fonts(mut self, fonts: motoreel_typeset::Fonts) -> Self {
+        self.canvas.fonts = Some(fonts);
+        self
+    }
 }
 
 impl FrameSink for PpmSink {
@@ -129,6 +145,14 @@ impl FrameSink for PpmSink {
         self.canvas.clear();
         for prim in prims {
             self.canvas.draw(prim); // draw order = slice order (painter's)
+        }
+        // A frame that could not set its text is not a frame. Writing it
+        // anyway is how «b?ceps» reached 45 published pieces.
+        if let Some(why) = self.canvas.failed.take() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("frame {index}: {why}"),
+            ));
         }
         let path = self.dir.join(format!("frame_{index:05}.ppm"));
         let mut file = fs::File::create(path)?;
@@ -153,6 +177,17 @@ struct Canvas {
     coverage: Vec<f64>,
     /// Scratch segment list in pixel space (capacity caches only).
     segments: Vec<(Px, Px)>,
+    /// The faces text is set in; `None` until [`PpmSink::with_fonts`].
+    #[cfg(feature = "text")]
+    fonts: Option<motoreel_typeset::Fonts>,
+    /// The first text failure of the frame in flight.
+    ///
+    /// `draw` has no return value — the painter's loop is infallible by
+    /// design — so a failure is parked here and raised by `frame`, which
+    /// does have an error channel. First one wins: a frame whose face is
+    /// missing a glyph would otherwise report the same thing once per
+    /// occurrence, and the first is the one you fix.
+    failed: Option<String>,
 }
 
 impl Canvas {
@@ -181,8 +216,9 @@ impl Canvas {
                 text,
                 size,
                 align,
+                face,
                 style,
-            } => self.draw_text(*at, text, *size, *align, *style),
+            } => self.draw_text(*at, text, *size, *align, *face, *style),
             Prim2::Point { .. }
             | Prim2::Segment { .. }
             | Prim2::Polyline { .. }
@@ -190,66 +226,116 @@ impl Canvas {
         }
     }
 
-    /// Blit one ASCII run from the embedded face (SPEC-0007 §2.8, §2.9).
+    /// Set one run in real type (R-0009).
     ///
-    /// Integer nearest-neighbour scaling, integer pen origin, one
-    /// `src_over` per lit pixel. Glyph cells are disjoint, so there is
-    /// nothing to union and no coverage tile is needed — SPEC-0006's
-    /// one-composite-per-pixel-per-primitive rule still holds.
-    fn draw_text(&mut self, at: Pt2, text: &str, size: f64, align: Align, style: Style) {
+    /// Measured and placed by `motoreel-typeset`, which hands back
+    /// coverage; this composites it. Proportional advances, real kerning,
+    /// and subpixel horizontal placement — none of which the 5 × 7 bitmap
+    /// face it replaces could do, and none of which matters as much as
+    /// the fact that it can write `é`.
+    #[cfg(feature = "text")]
+    fn draw_text(
+        &mut self,
+        at: Pt2,
+        text: &str,
+        size: f64,
+        align: Align,
+        face: usize,
+        style: Style,
+    ) {
+        use motoreel_typeset::{measure, place, rasterize, FaceId};
+
         let alpha = unit(style.alpha);
         // `size` is author data carried verbatim (SPEC-0007 §2.3); this is
         // the sink's own guard, the counterpart of the stroke path's.
         if !(size.is_finite() && size > 0.0) || alpha == 0.0 || text.is_empty() {
             return;
         }
-        // Integer scale from the face's own metrics, never their values
-        // inline. A sub-font-pixel `size` clamps to 1 rather than vanishing.
-        let k = (size * self.scale / font::CELL_H as f64)
-            .round()
-            .clamp(1.0, 4096.0) as i64;
-        let (px, py) = to_pixel(at, self.scale, self.dims);
-
-        let advance = font::CELL_W * k;
-        let width = advance * text.len() as i64;
-        let pen = match align {
-            Align::Left => px,
-            // `CELL_W · k · n` is even, so the halving is exact.
-            Align::Center => px - (width / 2) as f64,
-            Align::Right => px - width as f64,
+        let Some(fonts) = self.fonts.as_ref() else {
+            self.fail(format!(
+                "no faces registered; {text:?} cannot be set. \
+                 Build the sink with PpmSink::with_fonts"
+            ));
+            return;
         };
-        let x0 = pen.floor() as i64;
-        // The anchor is the baseline, so the cell top is `BASELINE` font-
-        // pixels above it.
-        let y0 = py.floor() as i64 - font::BASELINE * k;
 
-        for (i, byte) in text.bytes().enumerate() {
-            let bits = font::glyph(byte);
-            let gx = x0 + advance * i as i64;
-            for (r, row) in bits.iter().enumerate() {
-                // `0..5` and `0b10000` are the row's storage layout,
-                // defined by the table's own doc comment — not a metric.
-                for c in 0..5 {
-                    if row & (0b10000 >> c) == 0 {
-                        continue;
-                    }
-                    self.fill_block(gx + k * c, y0 + k * r as i64, k, style.stroke, alpha);
-                }
+        let run = match measure(text, FaceId(face), size * self.scale, fonts) {
+            Ok(r) => r,
+            Err(e) => {
+                self.fail(format!("{e}"));
+                return;
             }
+        };
+        let (px, py) = to_pixel(at, self.scale, self.dims);
+        let layout = place(&run, (px, 0.0), Canvas::align_of(align));
+
+        // The typesetter works y-up from the baseline; `to_pixel` gives a
+        // y-down row. Placing at y = 0 and subtracting is what bridges
+        // them, and keeps the f64 handed to the rasterizer small.
+        let mut spans: Vec<(i64, i64, f64)> = Vec::new();
+        if let Err(e) = rasterize(&layout, fonts, |x, y, c| spans.push((x, y, c))) {
+            self.fail(format!("{e}"));
+            return;
+        }
+        let base = py.floor() as i64;
+        for (x, y, c) in spans {
+            self.blend_pixel(x, base - y, style.stroke, alpha * c);
         }
     }
 
-    /// One `k × k` block, clipped to the canvas before any per-pixel work
-    /// so an off-frame run costs nothing.
-    fn fill_block(&mut self, x: i64, y: i64, k: i64, src: Rgb, alpha: f64) {
-        let Some(tile) = Tile::clip(x, y, x + k, y + k, self.dims) else {
+    /// Without the `text` feature there is no typesetter, so a text
+    /// primitive is refused rather than silently skipped.
+    #[cfg(not(feature = "text"))]
+    fn draw_text(
+        &mut self,
+        _at: Pt2,
+        text: &str,
+        _size: f64,
+        _align: Align,
+        _face: usize,
+        _style: Style,
+    ) {
+        self.fail(format!(
+            "built without the `text` feature; {text:?} cannot be set"
+        ));
+    }
+
+    /// Park the first failure of the frame; `frame` raises it.
+    fn fail(&mut self, why: String) {
+        if self.failed.is_none() {
+            self.failed = Some(why);
+        }
+    }
+
+    /// One pixel of coverage, composited `src_over`.
+    ///
+    /// Clipping here rather than in the caller means an off-canvas run
+    /// costs one comparison per pixel and nothing else — the same bargain
+    /// the block blitter it replaces struck.
+    #[cfg(feature = "text")]
+    fn blend_pixel(&mut self, x: i64, y: i64, src: Rgb, alpha: f64) {
+        let (w, h) = self.dims;
+        if x < 0 || y < 0 || x >= i64::from(w) || y >= i64::from(h) {
             return;
-        };
-        for y in tile.y0..tile.y1 {
-            for x in tile.x0..tile.x1 {
-                let i = (y as usize * self.dims.0 as usize + x as usize) * 3;
-                src_over(&mut self.pixels[i..i + 3], src, alpha);
-            }
+        }
+        // Non-negative and in range, so the arithmetic is exact in usize.
+        let i = (y as usize * w as usize + x as usize) * 3;
+        for (c, chan) in [src.r, src.g, src.b].into_iter().enumerate() {
+            let under = f64::from(self.pixels[i + c]);
+            let over = f64::from(chan);
+            self.pixels[i + c] = alpha.mul_add(over - under, under).round() as u8;
+        }
+    }
+
+    /// motoreel's alignment, in the typesetter's vocabulary. Two closed
+    /// sets of three, so the mapping is total and a fourth variant on
+    /// either side is a compile error.
+    #[cfg(feature = "text")]
+    fn align_of(align: Align) -> motoreel_typeset::Align {
+        match align {
+            Align::Left => motoreel_typeset::Align::Left,
+            Align::Center => motoreel_typeset::Align::Center,
+            Align::Right => motoreel_typeset::Align::Right,
         }
     }
 
@@ -444,24 +530,6 @@ impl Tile {
         let y1 = ((hi.1 + pad).ceil().max(0.0) as u32 + 1).min(dims.1);
         (x0 < x1 && y0 < y1).then_some(Tile { x0, y0, x1, y1 })
     }
-
-    /// Clip an integer destination rectangle to the canvas — the glyph
-    /// run's counterpart to `around`, which clips a padded float box.
-    /// `around` is deliberately not refactored onto this: that would be
-    /// churn in landed logic for symmetry alone (SPEC-0007 §2.13 edit 4).
-    fn clip(x0: i64, y0: i64, x1: i64, y1: i64, dims: (u32, u32)) -> Option<Tile> {
-        let cx0 = x0.clamp(0, i64::from(dims.0)) as u32;
-        let cy0 = y0.clamp(0, i64::from(dims.1)) as u32;
-        let cx1 = x1.clamp(0, i64::from(dims.0)) as u32;
-        let cy1 = y1.clamp(0, i64::from(dims.1)) as u32;
-        (cx0 < cx1 && cy0 < cy1).then_some(Tile {
-            x0: cx0,
-            y0: cy0,
-            x1: cx1,
-            y1: cy1,
-        })
-    }
-
     fn intersect(self, other: Option<Tile>) -> Option<Tile> {
         let o = other?;
         let t = Tile {

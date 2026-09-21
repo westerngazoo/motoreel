@@ -22,6 +22,8 @@ pub struct SvgSink {
     header: String,
     buf: String,
     view: (f64, f64),
+    /// CSS family name per face index. See [`SvgSink::with_families`].
+    families: Vec<String>,
 }
 
 impl SvgSink {
@@ -77,7 +79,35 @@ impl SvgSink {
             header,
             buf: String::new(),
             view,
+            families: Vec::new(),
         })
+    }
+
+    /// The CSS family names this sink writes into `font-family`, indexed
+    /// the way `Prim2::Text::face` indexes them.
+    ///
+    /// Not a font registry: this sink emits `<text>` and the *consumer's*
+    /// font engine resolves the face, so the right currency here is a
+    /// family name, not a loaded file. The two sinks therefore need not
+    /// agree on which file backs a name (R-0009 OQ-3).
+    ///
+    /// Left unset, every run says `monospace` — what this sink emitted
+    /// before R-0009, which keeps R-0003's golden bytes intact.
+    #[must_use]
+    pub fn with_families<I, T>(mut self, families: I) -> Self
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<String>,
+    {
+        self.families = families.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// The family for a face index, or `monospace` when none is named.
+    fn family(&self, face: usize) -> &str {
+        self.families
+            .get(face)
+            .map_or("monospace", std::string::String::as_str)
     }
 
     fn write_prim(&mut self, prim: &Prim2) {
@@ -157,6 +187,7 @@ impl SvgSink {
                 text,
                 size,
                 align,
+                face,
                 style,
             } => {
                 debug_assert_finite(at);
@@ -164,14 +195,19 @@ impl SvgSink {
                 // flip, so glyphs are upright and this element's own
                 // coordinates are y-down: hence `-y`. Emitting a second
                 // <g> instead would move R-0003's golden bytes (§2.7).
+                //
+                // Bound first: `write!` borrows `self.buf` mutably and
+                // `family` borrows `self`.
+                let family = self.family(*face).to_owned();
                 let _ = write!(
                     self.buf,
                     "<text transform=\"scale(1 -1)\" x=\"{}\" y=\"{}\" \
-                     font-family=\"monospace\" font-size=\"{}\" \
+                     font-family=\"{}\" font-size=\"{}\" \
                      text-anchor=\"{}\" xml:space=\"preserve\" \
                      fill=\"{}\" fill-opacity=\"{}\">",
                     at.x,
                     -at.y,
+                    family,
                     size,
                     anchor_word(*align),
                     hex(style),
@@ -196,14 +232,15 @@ fn anchor_word(align: Align) -> &'static str {
 
 /// XML element-content escaping — the only escaping motoreel performs.
 ///
-/// `text` is printable ASCII by `Prim2::Text`'s invariant, so three
-/// metacharacters exhaust the interesting cases: no control character and
-/// no numeric character reference can arise. `"` and `'` are legal in
-/// element content and this string never enters an attribute value.
+/// Three metacharacters exhaust the interesting cases in element
+/// content: `"` and `'` are legal there and this string never enters an
+/// attribute value.
 ///
-/// The map is **total over `char`**, not over `0x20..=0x7E`: the fallback
-/// arm passes anything else through, so a hand-built `Prim2` that violates
-/// the invariant still yields well-formed UTF-8 (§2.6, §2.10).
+/// The map is **total over `char`**, and always was — the fallback arm
+/// passes everything else through as UTF-8, which is why this function
+/// needed no change when R-0009 removed `Prim2::Text`'s ASCII invariant.
+/// The SVG sink could have written «bíceps» all along; `to_ascii` upstream
+/// never let it try.
 fn escape_text(text: &str, out: &mut String) {
     for c in text.chars() {
         match c {

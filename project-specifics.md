@@ -33,9 +33,10 @@ The concrete commands referenced by `CLAUDE.md` §6 and by the `architect` and
 - **Build command:** `cargo build --workspace`
 - **Test command:** `cargo test --workspace`
 - **Lint command:** `cargo clippy --workspace --all-targets -- -D warnings`
-- **Format-check command:** `cargo fmt -p motoreel --check` *(scoped per package —
-  `--all` follows the garust path dependency and formats it under the wrong
-  config; add new workspace members to this command as they appear)*
+- **Format-check command:** `cargo fmt -p motoreel -p motoreel-typeset --check`
+  *(scoped per package — `--all` follows the garust path dependency and formats
+  it under the wrong config; add new workspace members to this command as they
+  appear)*
 - **Run the gate under CI's toolchain, not just the default one.** CI uses
   `dtolnay/rust-toolchain@stable`. A machine sitting a few releases behind
   cannot see the lints stable has since added, so a locally green gate can
@@ -48,7 +49,7 @@ The concrete commands referenced by `CLAUDE.md` §6 and by the `architect` and
   rustup toolchain install stable --component clippy --profile minimal
   rustup run stable cargo test --workspace
   rustup run stable cargo clippy --workspace --all-targets -- -D warnings
-  rustup run stable cargo fmt -p motoreel --check
+  rustup run stable cargo fmt -p motoreel -p motoreel-typeset --check
   ```
 
   Deliberately not pinned via `rust-toolchain.toml`: a pin makes local and
@@ -84,6 +85,12 @@ The non-obvious domain facts:
 - **Deterministic offline rendering, not a game engine.** Same scene → same
   frames, bit-for-bit. No real-time playback, windowing, input, audio, or
   timeline UI. Video encoding stays outside the crate.
+- **Real type is IN scope (owner decision, 2026-09-20, R-0009).** The
+  previous line said "no layout engine, no LaTeX, no rich text". Two of
+  those stand: no LaTeX, no rich text. The third moved — text now carries
+  a TeX-shaped box model (width, height, depth), because the alternative
+  was rewriting it the first time a fraction appeared. Mathematical
+  *layout* remains out of scope until its own requirement.
 - **Anchored text labels are IN scope (owner decision, 2026-08-27).**
   Previously an explicit non-goal. Reversed because the project now has an
   audience: an explanatory video that cannot name an axis, a quantity, or a
@@ -98,8 +105,14 @@ The non-obvious domain facts:
   librsvg, so `-i frame_%05d.svg` fails on an ordinary install. The raster
   sink (P6 PPM) is the answer — verified to encode with stock ffmpeg and no
   external rasterizer — and is promoted out of M4 accordingly.
-- **Zero dependencies in the core** — the garust discipline. Frame sinks are
-  pure text SVG and binary P6 PPM. `std` is required (file I/O).
+- **Zero dependencies in the kernel** — the garust discipline, now a
+  *feature*, not a fact about the whole crate. `cargo build -p motoreel
+  --no-default-features` is `garust` and `std` alone, and a test asserts
+  it. The default build adds `motoreel-typeset` (R-0009), because an
+  explanatory engine that cannot write `é` is not one — see R-0009 AC7,
+  which also records that the first justification for keeping the
+  typesetter out of the graph was one I had not checked and was wrong.
+  Frame sinks are still pure text SVG and binary P6 PPM.
 - **Angles are radians measured against TAU**, matching garust convention.
 - **Physics is a motion source, not a separate system.** garust-physics
   (garust RFC-010) integrates on the motor group: a body's pose *is* a
