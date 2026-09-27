@@ -615,22 +615,40 @@ fn is_catch_all(pattern: &str) -> bool {
 /// does it; `None`, with a printed note, otherwise. AC12's encode **skips**
 /// rather than fails: a creator's machine has ffmpeg, a dev box may not,
 /// and a missing encoder is not a defect in our frames.
+///
+/// Every `None` leaves through [`skip_ac12`], so no way out is silent: a
+/// probe that could not even be spawned used to return `None` unprinted,
+/// which CI's "AC12 skipped" grep could not see.
 fn ffmpeg_with_libx264() -> Option<String> {
-    let which = Command::new("which").arg("ffmpeg").output().ok()?;
+    let Ok(which) = Command::new("which").arg("ffmpeg").output() else {
+        return skip_ac12("`which ffmpeg` could not be run");
+    };
     if !which.status.success() {
-        eprintln!("AC12 skipped: no ffmpeg on PATH");
-        return None;
+        return skip_ac12("no ffmpeg on PATH");
     }
     let path = String::from_utf8_lossy(&which.stdout).trim().to_string();
-    let encoders = Command::new(&path)
+    let Ok(encoders) = Command::new(&path)
         .args(["-hide_banner", "-encoders"])
         .output()
-        .ok()?;
+    else {
+        return skip_ac12(&format!("ffmpeg at {path} could not be run"));
+    };
     if !String::from_utf8_lossy(&encoders.stdout).contains("libx264") {
-        eprintln!("AC12 skipped: ffmpeg at {path} has no libx264");
-        return None;
+        return skip_ac12(&format!("ffmpeg at {path} has no libx264"));
     }
     Some(path)
+}
+
+/// Skip AC12's encode, saying why — or, under `MOTOREEL_REQUIRE_FFMPEG=1`,
+/// fail it. CI sets the variable on a runner where it installed ffmpeg:
+/// there a skip is a false pass, so it must be a panic, not a note that a
+/// grep has to catch.
+fn skip_ac12(why: &str) -> Option<String> {
+    if std::env::var_os("MOTOREEL_REQUIRE_FFMPEG").is_some_and(|v| v == "1") {
+        panic!("AC12 must encode, not skip, with MOTOREEL_REQUIRE_FFMPEG=1: {why}");
+    }
+    eprintln!("AC12 skipped: {why}");
+    None
 }
 
 /// A face for the text primitive, as R-0007's suite finds one. Since R-0009
@@ -4194,8 +4212,9 @@ mod ac12 {
     }
 
     // AC12 — the clip encodes with stock ffmpeg, as R-0006 AC6 does it. It
-    // skips, not fails, when ffmpeg or libx264 is absent. `-y -nostdin` is
-    // harness hygiene, not part of the documented command.
+    // skips, not fails, when ffmpeg or libx264 is absent, unless
+    // `MOTOREEL_REQUIRE_FFMPEG=1` (CI) turns the skip into a failure.
+    // `-y -nostdin` is harness hygiene, not part of the documented command.
     #[test]
     fn stock_ffmpeg_encodes_the_card() {
         let Some(ffmpeg) = ffmpeg_with_libx264() else {

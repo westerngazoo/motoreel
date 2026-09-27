@@ -73,9 +73,15 @@ jobs:
       # The same guard for R-0012 AC12: the card demo must encode for real
       # here. `--exact` plus the "1 passed" check also fail the step if the
       # test is renamed and the filter silently matches nothing.
+      # MOTOREEL_REQUIRE_FFMPEG=1 makes the test itself panic on any path
+      # that would skip, so a probe that exits without printing the skip
+      # note can no longer pass as "1 passed"; the grep stays as a second
+      # line of defence.
       - name: AC12 encoded for real, and did not skip
         working-directory: motoreel
         shell: bash
+        env:
+          MOTOREEL_REQUIRE_FFMPEG: "1"
         run: |
           set -o pipefail
           cargo test -p motoreel --test r0012_paths_fills \
