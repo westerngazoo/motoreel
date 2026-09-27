@@ -237,6 +237,22 @@ fn prim_parts(prim: &Prim2) -> (u8, Vec<Pt2>, Style) {
             segments.iter().flat_map(|(a, b)| [*a, *b]).collect(),
             *style,
         ),
+        // R-0012's sixth variant, added exactly as the `Edges` and `Text`
+        // arms were: every control point in order, and the style. Path
+        // behaviour is R-0012's to verify.
+        Prim2::Path { subpaths, style } => {
+            let mut points = Vec::new();
+            for sub in subpaths {
+                points.push(sub.start);
+                for seg in &sub.segs {
+                    match *seg {
+                        motoreel::Seg::Line(end) => points.push(end),
+                        motoreel::Seg::Cubic(h1, h2, end) => points.extend([h1, h2, end]),
+                    }
+                }
+            }
+            (5, points, *style)
+        }
     }
 }
 
@@ -652,6 +668,7 @@ fn ac5_edges_emit_one_styled_primitive_with_every_segment() {
         },
         width: 0.125,
         alpha: 0.75,
+        fill: None,
     };
     // Dyadic half-extents at view depth 4 with focal 2: image = x/2, y/2,
     // exact — no tolerance needed.
@@ -805,6 +822,7 @@ fn ac6_edge_template_matches_its_pinned_bytes() {
                 },
                 width: 0.25,
                 alpha: 1.0,
+                fill: None,
             },
         },
         Prim2::Edges {
@@ -817,6 +835,7 @@ fn ac6_edge_template_matches_its_pinned_bytes() {
                 },
                 width: 0.03125,
                 alpha: 0.25,
+                fill: None,
             },
         },
         Prim2::Edges {
@@ -825,6 +844,7 @@ fn ac6_edge_template_matches_its_pinned_bytes() {
                 stroke: Rgb { r: 0, g: 0, b: 0 },
                 width: 0.1,
                 alpha: 0.5,
+                fill: None,
             },
         },
     ];
@@ -853,6 +873,7 @@ fn r0003_golden_scene() -> Scene {
         },
         width: 0.02,
         alpha: 1.0,
+        fill: None,
     };
     let orange = Style {
         stroke: Rgb {
@@ -862,6 +883,7 @@ fn r0003_golden_scene() -> Scene {
         },
         width: 0.06,
         alpha: 1.0,
+        fill: None,
     };
     let teal = Style {
         stroke: Rgb {
@@ -871,6 +893,7 @@ fn r0003_golden_scene() -> Scene {
         },
         width: 0.02,
         alpha: 0.5,
+        fill: None,
     };
     let mut scene = Scene::new(1.0);
     scene.add(
@@ -1222,7 +1245,7 @@ prop_compose! {
         width in 0.0f64..4.0,
         alpha in 0.0f64..=1.0,
     ) -> Style {
-        Style { stroke: Rgb { r, g, b }, width, alpha }
+        Style { stroke: Rgb { r, g, b }, width, alpha, fill: None }
     }
 }
 

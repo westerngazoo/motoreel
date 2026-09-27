@@ -118,6 +118,7 @@ fn style(stroke: Rgb, width: f64, alpha: f64) -> Style {
         stroke,
         width,
         alpha,
+        fill: None,
     }
 }
 

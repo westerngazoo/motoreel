@@ -2,13 +2,14 @@
 
 use garust::{pga, Motor3};
 
-use crate::prim::Style;
+use crate::path::Subpath;
+use crate::prim::{Pt2, Style};
 use crate::track::Track;
 
 /// Drawable model-space geometry as typed PGA points.
 ///
-/// Exactly R-0002's list; derived incidence shapes (`JoinLine`,
-/// `MeetPoint`) arrive with M3 (R-0007).
+/// R-0002's list, plus `Edges` (R-0004) and `Path` (R-0012); derived
+/// incidence shapes (`JoinLine`, `MeetPoint`) arrive with M3.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Shape {
     /// A single point.
@@ -25,16 +26,20 @@ pub enum Shape {
     /// vertex of a box has odd degree), so a polyline would visibly
     /// retrace edges.
     Edges(Vec<(pga::Point, pga::Point)>),
+    /// Straight and cubic pieces in model space, stroked and/or filled
+    /// (SPEC-0012 §2.3). Posed by the object's track like every shape:
+    /// its control points ride the motor, which is exact for a Bézier.
+    Path(Vec<Subpath<pga::Point>>),
 }
 
-/// A scene entry: geometry, stroke style, and the motor track posing it.
+/// A scene entry: geometry, paint style, and the motor track posing it.
 ///
 /// Plain data — all fields public, any combination valid.
 #[derive(Clone, Debug)]
 pub struct Object {
     /// Model-space geometry, posed by `track` at evaluation time.
     pub shape: Shape,
-    /// Stroke style, carried to the emitted primitive unchanged (AC4).
+    /// Stroke and fill, carried to the emitted primitive unchanged (AC4).
     pub style: Style,
     /// Pose over time (SPEC-0001); a single key means a static object.
     pub track: Track,
@@ -59,6 +64,19 @@ impl Object {
     /// A wireframe object with default style, holding the identity pose.
     pub fn edges(segments: Vec<(pga::Point, pga::Point)>) -> Self {
         Object::with_shape(Shape::Edges(segments))
+    }
+
+    /// A path object with default style, holding the identity pose.
+    pub fn path(subpaths: Vec<Subpath<pga::Point>>) -> Self {
+        Object::with_shape(Shape::Path(subpaths))
+    }
+
+    /// A path authored in a plane — the output of [`crate::shapes`] —
+    /// with each `(x, y)` lifted to the model's `z = 0` plane. Default
+    /// style, identity pose.
+    pub fn planar(subpaths: Vec<Subpath<Pt2>>) -> Self {
+        let lift = |p: &Pt2| pga::Point::new(p.x, p.y, 0.0);
+        Object::path(subpaths.iter().map(|s| s.map(lift)).collect())
     }
 
     /// Replace the style (builder).

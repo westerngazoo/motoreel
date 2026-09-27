@@ -10,7 +10,8 @@ use std::fmt::Write as _;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::prim::{Align, Prim2, Pt2, Style};
+use crate::path::{Seg, Subpath};
+use crate::prim::{Align, Fill, Prim2, Pt2, Rgb, Style};
 use crate::sink::FrameSink;
 
 /// Writes one `frame_%05d.svg` per frame into a directory (RFC-012 §3.3).
@@ -121,7 +122,7 @@ impl SvgSink {
                     at.x,
                     at.y,
                     style.width / 2.0,
-                    hex(style),
+                    hex(style.stroke),
                     style.alpha,
                 );
             }
@@ -137,7 +138,7 @@ impl SvgSink {
                     a.y,
                     b.x,
                     b.y,
-                    hex(style),
+                    hex(style.stroke),
                     style.width,
                     style.alpha,
                 );
@@ -156,7 +157,7 @@ impl SvgSink {
                     "\" fill=\"none\" stroke=\"{}\" stroke-width=\"{}\" \
                      stroke-opacity=\"{}\" stroke-linecap=\"round\" \
                      stroke-linejoin=\"round\"/>",
-                    hex(style),
+                    hex(style.stroke),
                     style.width,
                     style.alpha,
                 );
@@ -177,7 +178,7 @@ impl SvgSink {
                     self.buf,
                     "\" fill=\"none\" stroke=\"{}\" stroke-width=\"{}\" \
                      stroke-opacity=\"{}\" stroke-linecap=\"round\"/>",
-                    hex(style),
+                    hex(style.stroke),
                     style.width,
                     style.alpha,
                 );
@@ -210,14 +211,103 @@ impl SvgSink {
                     family,
                     size,
                     anchor_word(*align),
-                    hex(style),
+                    hex(style.stroke),
                     style.alpha,
                 );
                 escape_text(text, &mut self.buf);
                 let _ = writeln!(self.buf, "</text>");
             }
+            Prim2::Path { subpaths, style } => self.write_path(subpaths, style),
         }
     }
+
+    /// One `<path>` element (SPEC-0012 §2.8): absolute `M`/`L`/`C`/`Z` in
+    /// image coordinates — the document group flips y — then the fill,
+    /// then the stroke.
+    ///
+    /// A paint that paints nothing says `none`, and its other attributes
+    /// are omitted. The tests ([`fill_paints`], [`stroke_paints`]) are
+    /// `PpmSink`'s own, so the two sinks agree on which paints exist.
+    fn write_path(&mut self, subpaths: &[Subpath<Pt2>], style: &Style) {
+        self.buf.push_str("<path d=\"");
+        for (i, sub) in subpaths.iter().enumerate() {
+            if i > 0 {
+                self.buf.push(' ');
+            }
+            write_subpath(&mut self.buf, sub);
+        }
+        self.buf.push('"');
+        match style.fill.filter(fill_paints) {
+            Some(fill) => {
+                let _ = write!(
+                    self.buf,
+                    " fill=\"{}\" fill-opacity=\"{}\" fill-rule=\"nonzero\"",
+                    hex(fill.colour),
+                    fill.alpha,
+                );
+            }
+            None => self.buf.push_str(" fill=\"none\""),
+        }
+        if stroke_paints(style) {
+            let _ = write!(
+                self.buf,
+                " stroke=\"{}\" stroke-width=\"{}\" stroke-opacity=\"{}\" \
+                 stroke-linecap=\"round\" stroke-linejoin=\"round\"",
+                hex(style.stroke),
+                style.width,
+                style.alpha,
+            );
+        } else {
+            self.buf.push_str(" stroke=\"none\"");
+        }
+        let _ = writeln!(self.buf, "/>");
+    }
+}
+
+/// One subpath's path data, exactly as SPEC-0012 §2.13 pins it: commands
+/// separated by one space, each point written `x,y`, the points of a `C`
+/// separated by one space, and `Z` only where `closed` is set — an open
+/// subpath still fills as closed, by the renderer's implicit close.
+fn write_subpath(buf: &mut String, sub: &Subpath<Pt2>) {
+    buf.push_str("M ");
+    write_point(buf, &sub.start);
+    for seg in &sub.segs {
+        match seg {
+            Seg::Line(end) => {
+                buf.push_str(" L ");
+                write_point(buf, end);
+            }
+            Seg::Cubic(h1, h2, end) => {
+                buf.push_str(" C ");
+                write_point(buf, h1);
+                buf.push(' ');
+                write_point(buf, h2);
+                buf.push(' ');
+                write_point(buf, end);
+            }
+        }
+    }
+    if sub.closed {
+        buf.push_str(" Z");
+    }
+}
+
+/// `x,y` with Rust's `{}` for each coordinate (SPEC-0003's number rule).
+fn write_point(buf: &mut String, p: &Pt2) {
+    debug_assert_finite(p);
+    let _ = write!(buf, "{},{}", p.x, p.y);
+}
+
+/// Whether a fill paints: alpha finite and > 0 — `PpmSink`'s test, so a
+/// NaN alpha writes `fill="none"`, never `fill-opacity="NaN"` (§2.13).
+fn fill_paints(fill: &Fill) -> bool {
+    fill.alpha.is_finite() && fill.alpha > 0.0
+}
+
+/// Whether a stroke paints, by `PpmSink`'s guard (SPEC-0012 §2.8). NaN
+/// fails every comparison, so a NaN width or alpha paints nothing.
+fn stroke_paints(style: &Style) -> bool {
+    style.width.is_finite() && style.width > 0.0 && style.alpha > 0.0
 }
 
 /// SVG's `text-anchor` keyword for an [`Align`] — a closed set of literals,
@@ -269,11 +359,8 @@ impl FrameSink for SvgSink {
 }
 
 /// Lowercase `#rrggbb`, always six digits.
-fn hex(style: &Style) -> String {
-    format!(
-        "#{:02x}{:02x}{:02x}",
-        style.stroke.r, style.stroke.g, style.stroke.b
-    )
+fn hex(color: Rgb) -> String {
+    format!("#{:02x}{:02x}{:02x}", color.r, color.g, color.b)
 }
 
 /// Test-time tripwire on SPEC-0002's coordinate invariant (§2.8 item 7);

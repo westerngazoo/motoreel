@@ -404,6 +404,7 @@ fn ac2_primitive_templates_are_pinned() {
                 },
                 width: 0.25,
                 alpha: 1.0,
+                fill: None,
             },
         },
         Prim2::Point {
@@ -416,6 +417,7 @@ fn ac2_primitive_templates_are_pinned() {
                 },
                 width: 0.2,
                 alpha: 0.25,
+                fill: None,
             },
         },
         Prim2::Polyline {
@@ -428,6 +430,7 @@ fn ac2_primitive_templates_are_pinned() {
                 stroke: Rgb { r: 0, g: 0, b: 0 },
                 width: 0.03125,
                 alpha: 0.5,
+                fill: None,
             },
         },
     ];
@@ -509,6 +512,7 @@ fn golden_scene() -> Scene {
         },
         width: 0.02,
         alpha: 1.0,
+        fill: None,
     };
     let orange = Style {
         stroke: Rgb {
@@ -518,6 +522,7 @@ fn golden_scene() -> Scene {
         },
         width: 0.06, // the dot renders as a filled circle of radius 0.03
         alpha: 1.0,
+        fill: None,
     };
     let teal = Style {
         stroke: Rgb {
@@ -527,6 +532,7 @@ fn golden_scene() -> Scene {
         },
         width: 0.02,
         alpha: 0.5,
+        fill: None,
     };
     let mut scene = Scene::new(1.0);
     scene.add(
