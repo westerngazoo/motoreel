@@ -149,6 +149,13 @@ has to say what "correct" means under a pinhole camera (AC4, OQ-1).
   - A stroked circle of radius R px and stroke radius r ≥ 1 px lights only
     pixels whose centres lie within `R ± (r + 0.5 + 0.1)` px of the true
     centre, and lights every pixel within `R ± (r − 0.5)`.
+
+    > **Proposed amendment (2026-09-27, owner approval pending).** Widen the
+    > outer band to `R ± (r + 0.5 + 0.1 + 3·10⁻⁴·R)`. The 4-cubic circle
+    > (AC7) lies up to 2.725·10⁻⁴·R *outside* the true circle, which is
+    > 0.136 px at R = 500 px, as §2 of this very requirement states. As
+    > written, this criterion cannot hold for R > 333 px. Found by the
+    > SPEC-0012 architect review, finding 1.
   - Chord counts are a pure function of the segment's pixel-space control
     points, so they introduce no nondeterminism.
 

@@ -1,6 +1,6 @@
 # SPEC-0012 — Paths and fills
 
-- **Status:** Draft (architect review pending)
+- **Status:** Draft, revised after architect review (2026-09-27): all 15 findings applied, and one R-0012 AC6 amendment awaits the owner (§7)
 - **Realizes:** R-0012
 - **Author:** Claude (main session) with owner
 - **Created:** 2026-09-27
@@ -8,12 +8,15 @@
   SPEC-0003 (`SvgSink`, number formatting, golden scheme), SPEC-0006
   (`PpmSink`, coverage ramp, determinism argument §2.7)
 - **Module(s):**
-  - new `crates/motoreel/src/path.rs`: path types, flattening, subdivision
+  - new `crates/motoreel/src/path.rs`: generic path types, builder, `map`,
+    `reversed` and de Casteljau split. It has no point type of its own and no
+    flattening
   - new `crates/motoreel/src/shapes.rs`: shape generators
   - `crates/motoreel/src/prim.rs`: `Fill`, `Style::fill`, `Prim2::Path`
   - `crates/motoreel/src/object.rs`: `Shape::Path`
   - `crates/motoreel/src/scene.rs`: path projection
-  - `crates/motoreel/src/ppm.rs`: fill rasterizer and path strokes
+  - `crates/motoreel/src/ppm.rs`: pixel-space flattening (on its own `Px`),
+    the fill rasterizer and path strokes
   - `crates/motoreel/src/svg.rs`: `<path>` emission
   - `lib.rs`: exports
   - new `examples/card/`
@@ -43,18 +46,22 @@ design. §2 realizes them; it does not revisit them.
 
 ### 2.1 Path types (`path.rs`, std-only)
 
-`path.rs` depends on `std` alone, like `prim.rs`. It is generic over the
-point type, so one definition serves model space (`pga::Point`) and image
-space (`Pt2`).
+`path.rs` depends on `std` alone and **names no concrete point type**. It
+imports nothing from `prim.rs`, which imports `Subpath` from it, so the
+module graph has no cycle (CLAUDE.md §2; architect finding 4). One generic
+definition serves model space (`pga::Point`), image space (`Pt2`) and the
+raster sink's pixel space (`Px`).
 
 ```rust
 /// One piece of a subpath, ending at its last point.
+#[derive(Clone, Debug, PartialEq)]
 pub enum Seg<P> {
     Line(P),              // straight to P
     Cubic(P, P, P),       // handles h1, h2, then the end point
 }
 
 /// A connected outline: a start point and the segments that follow it.
+#[derive(Clone, Debug, PartialEq)]
 pub struct Subpath<P> {
     pub start: P,
     pub segs: Vec<Seg<P>>,
@@ -72,12 +79,27 @@ pub struct Subpath<P> {
   makes a hole under the nonzero rule.
 - **`Subpath::map(f)`** is the one way a subpath changes point type. Eval
   uses it to project control points (§2.4).
+- **`split_cubic(p0, p1, p2, p3, mid)`** is the generic de Casteljau halving
+  at `t = ½`, where `mid: Fn(&P, &P) -> P` is the caller's midpoint. It
+  returns the two halves' control points. Pinhole subdivision (§2.4) calls
+  it with a view-space midpoint on `to_euclidean` tuples. R-0013 (reveal
+  and morph) will reuse it for truncation and alignment, which is why it
+  stays generic.
+- The derives are required because `Shape` and `Prim2` derive `Clone,
+  Debug, PartialEq`.
 
 ### 2.2 Fill paint (`prim.rs`)
 
 ```rust
 /// A flat fill: colour and opacity. Gradients are a later requirement.
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Fill { pub colour: Rgb, pub alpha: f64 }
+
+impl Fill {
+    /// The constructor downstream code should use, so the gradients
+    /// requirement can change `Fill` without breaking literals again.
+    pub const fn solid(colour: Rgb, alpha: f64) -> Self { Fill { colour, alpha } }
+}
 
 pub struct Style {
     pub stroke: Rgb,
@@ -129,6 +151,9 @@ pub enum Prim2 { …, Path { subpaths: Vec<Subpath<Pt2>>, style: Style } }
   - there is at least one subpath;
   - no subpath is empty of segments. Empty subpaths are dropped at eval,
     and a path with nothing left is not emitted.
+  - A non-finite coordinate anywhere, including in a projected pinhole
+    piece, culls the **whole** primitive. This keeps SPEC-0002 §2.5's
+    invariant total.
 
 ### 2.4 Projection (`scene.rs`), realizing OQ-1
 
@@ -164,25 +189,45 @@ space by `to_view` (a motor, so rigid and affine). Then:
      `≤ 0.05 × (short side in px)/1000` px, which is 0.054 px at 1080 ×
      1920 and under 0.1 px for any frame whose short side is ≤ 2000 px.
      The bound scales with resolution, and that scaling is documented.
-   - **Why same-parameter comparison is conservative.** The distance
-     between the points at equal parameter bounds the distance from
-     `project(Q(t))` to the curve `q` from above. The estimate therefore
-     never under-reports deviation *at the probes*. Between probes it is a
-     heuristic, which is why AC4's test samples densely rather than
-     trusting the probes.
-   - **Termination:** a hard depth limit `PINHOLE_MAX_DEPTH = 12`, i.e.
-     at most 4096 pieces per authored cubic. A piece still over tolerance
-     at the limit is emitted anyway. This is reachable only for curves
-     within about 1/4096 of the near plane, and it is documented.
-   - Only `+ − × ÷` enter subdivision and projection. Pinhole projection
-     already divides by depth, so determinism is unchanged.
+   - **What the estimate is.** At each probe, the same-parameter distance
+     bounds the geometric distance from `project(Q(t))` to `q` from above.
+     It is a probe-point estimate, not a bound between probes. Architect
+     measurements (2026-09-27) put the same-parameter distance between
+     probes at up to 1.09 τ, while the **geometric** deviation of emitted
+     pieces stayed within 0.07 τ (emitted → true) and about 0.55 τ
+     (true → emitted, on a coarser polyline). AC4's test therefore measures
+     **geometric nearest-point distance in both directions**, never the
+     same-parameter one. Because the estimate also penalises the
+     reparametrisation perspective introduces, it over-subdivides. That
+     costs pieces, not accuracy: 131 per quarter circle at nearest depth
+     0.5, and 388 to 830 closer in.
+   - **Termination:** a hard depth limit `PINHOLE_MAX_DEPTH = 12`, i.e. at
+     most 4096 pieces per authored cubic. A piece still over the estimate
+     at the limit is emitted anyway. The limit is reached for curves that
+     are **large relative to their nearest depth**. For example, a 3-unit
+     ground-plane quarter circle whose nearest depth is 0.005 forced 232 of
+     830 pieces. Even there the geometric error stayed small, because the
+     over-estimate is reparametrisation, not deviation. A rigorous
+     alternative, subdividing until the ratio of maximum to minimum
+     control-point depth is at most `1 + κ·τ/diameter`, is recorded as a
+     possible later refinement.
+   - **Compound bound per sink.** SVG receives pieces within `τ` of the
+     true image. PPM then flattens them (§2.5), so the rendered outline is
+     within `τ + 0.1 px`, which is 0.154 px at 1080 × 1920. That compound
+     figure is AC4's "flattening tolerance" for the pinhole camera.
+   - Only `+ − × ÷` enter subdivision and projection. Subdivision works on
+     `to_euclidean` `(x, y, z)` tuples through `path::split_cubic` with a
+     tuple midpoint. Pinhole projection already divides by depth, so
+     determinism is unchanged.
    - `Seg::Line` pieces project their end points. A projective map sends
      lines to lines, so they are exact.
 
-### 2.5 Flattening for the raster sink (`path.rs`)
+### 2.5 Flattening for the raster sink (`ppm.rs`, on `Px`)
 
-The PPM sink maps control points to pixel space with `to_pixel`, which is
-affine, so this is exact. It then flattens each cubic into `n` chords with
+Flattening is a pixel-space concept (ε is 0.1 **px**), and its only
+consumer is the raster sink, so it lives in `ppm.rs` and works on that
+module's `Px` tuples (architect finding 4). The PPM sink maps control
+points to pixel space with `to_pixel`, which is affine, so this is exact. It then flattens each cubic into `n` chords with
 `n` chosen from a bound, never from a search.
 
 **Bound.** Let `L = max(‖P0 − 2P1 + P2‖, ‖P1 − 2P2 + P3‖)` in px. Then
@@ -196,7 +241,11 @@ n = clamp( ceil( sqrt( 3L / (4ε) ) ), 1, FLATTEN_MAX )   with ε = 0.1 px
 ```
 
 - The chord points are `B(i/n)`, evaluated in Bernstein form with plain
-  `+ − ×`. `mul_add` is forbidden, as in SPEC-0006 §2.7.
+  `+ − ×`. `mul_add` and `hypot` are forbidden in all path and fill code.
+  The norm in `L` is `sqrt(dx·dx + dy·dy)`.
+- The derivation is verified: `B''` is a linear blend of `6·Δ²`, so
+  `‖B''‖ ≤ 6L`. Over 3000 random cubics, including cusps, the worst
+  measured chord deviation was 0.0975 px and measured/bound ≤ 0.997.
 - `n` is a pure function of the pixel-space control points, which is
   R-0012 AC6.
 - **Cost:** a 300 px-radius quarter circle has `L ≈ 138`, so `n = 33` and
@@ -214,8 +263,14 @@ For one `Prim2::Path` with `fill = Some(f)`:
 **Edges.** Flatten every subpath (§2.5). For **fill**, every subpath
 contributes all of its chords plus its closing chord from its last point
 to `start`, whether or not `closed` is set. That is SVG's implicit close.
-Edges with a non-finite endpoint are dropped, with the same guard as
-`draw_stroke`.
+- **Non-finite endpoint:** if any edge has one, the **fill paints
+  nothing**. Dropping a single edge would open a closed loop and corrupt
+  the winding number across whole rows (architect finding 7). The stroke
+  keeps its per-segment `retain`. Eval's finite invariant makes this a
+  tripwire, not a path taken in practice.
+- **Zero-length edges** (`a == b`) are **skipped** for fill. They add
+  exactly 0 to the winding, and their normal would be NaN (finding 6). The
+  generators also omit zero-length sides (§2.9).
 
 **Winding number** `w(p)`, using the half-open crossing rule of Sunday's
 algorithm. For each edge `(a, b)`:
@@ -226,8 +281,9 @@ if a.y ≤ p.y < b.y and left > 0   → w += 1      // upward crossing, p on the
 if b.y ≤ p.y < a.y and left < 0   → w −= 1      // downward crossing, p on the right
 ```
 
-It uses integers and exact sign tests on basic floating-point arithmetic,
-so the result does not depend on edge order. `inside(p) ⇔ w(p) ≠ 0`.
+It uses integer counts and the **deterministic** sign of a rounded cross
+product. That is not the exact orientation predicate, but it is the same
+bits every run (finding 15). The result does not depend on edge order. `inside(p) ⇔ w(p) ≠ 0`.
 
 **Boundary edges.** An edge is part of the *boundary* at a point only if
 the inside test differs on its two sides. In a pentagram, the chords that
@@ -237,17 +293,28 @@ would show seams (R-0012 AC3). The classification of edge `e` at its foot
 point `f`, the point of `e` nearest the pixel centre, is:
 
 ```
-n̂ = unit normal of e                       (one sqrt)
-side⁺ = inside(f + δ·n̂),  side⁻ = inside(f − δ·n̂),   δ = 1/64 px
+t  = clamp(((c − a)·(b − a)) / |b − a|², 0, 1)
+f  = a if t == 0;  b if t == 1;  a + t·(b − a) otherwise    // endpoints VERBATIM
+n̂ = unit normal of e                                         (one sqrt)
+side⁺ = inside(f + δ·n̂),  side⁻ = inside(f − δ·n̂),   δ = 2⁻²⁰ px
 boundary ⇔ side⁺ ≠ side⁻ ;  the inside half-plane is the side that is inside
 ```
 
-- `δ = 1/64` is a power of two, so the probe offsets introduce no extra
-  rounding in the scaling.
-- If `f` falls exactly on a crossing of two edges, a probe can land on the
-  other edge. The half-open rule still assigns it deterministically, and
-  the error is confined to pixels within `δ` of a self-intersection
-  vertex. This is documented.
+- **The foot point is pinned (finding 2).** When `t` clamps, `f` is the
+  endpoint itself, because `a + 1.0·(b − a)` is not `b` in floating point.
+  At a right-angle corner the probe must land exactly where the geometry
+  says.
+- **`δ = 2⁻²⁰` px (finding 5).** It is a power of two, and far above the
+  rounding of coordinates on any canvas up to 2¹⁶ px. With the earlier
+  1/64, slivers thinner than about 1/64 px flipped abruptly from a smooth
+  ramp to aliased full-coverage specks. At 2⁻²⁰ that jump moves into the
+  fully degenerate range, and the zone near self-intersections where a
+  probe can land on another edge shrinks to 2⁻²⁰ px. The residual
+  behaviour is documented, not claimed away.
+- **Sub-pixel slivers over-ink,** as sub-pixel strokes do (SPEC-0006
+  §2.8). A sliver of width `w < 1` px paints about `(0.5 + w/2)²` of ink
+  per unit length rather than `w`. This regime is documented and outside
+  AC5's claim.
 
 **Coverage**, per pixel centre `c` in the tile. The tile is the bounding box
 of the edges, grown by 0.5 px and clamped:
@@ -255,7 +322,8 @@ of the edges, grown by 0.5 px and clamped:
 ```
 among edges e with d(c, e) < 0.5 that are boundary at their foot point:
     take the one with least d; break ties by (d, s) lexicographically, where
-    s = +d if c lies in e's inside half-plane, else −d
+    s = +d if c lies STRICTLY in e's inside half-plane, else −d
+        (c exactly on e's line, which happens beyond an endpoint, gives s = −d)
 if such an edge exists:  cov = unit(0.5 + s)             // the SPEC-0006 ramp
 else:                    cov = if inside(c) { 1 } else { 0 }
 ```
@@ -266,8 +334,13 @@ else:                    cov = if inside(c) { 1 } else { 0 }
   boundary is to within rounding.
 - **Closed form per pixel.** A pixel's coverage depends only on its centre
   and the edge set. The minimum and the lexicographic tie-break do not
-  depend on order. Nothing is carried from one pixel to the next, so
-  SPEC-0006 §2.7 point 3 holds as written.
+  depend on order. Nothing is carried from one pixel to the next.
+  SPEC-0006 §2.7 point 3 names "scanline edge list" among the forbidden
+  classes. The per-row list below is **not** that class: it is a pure
+  filter with exact set equality (an edge is in a row's list if and only
+  if its half-open y-range contains that row's centre line), and it carries
+  no incremental state. No `x += dx` is walked across a row. The
+  SPEC-0006 text is clarified accordingly (finding 12).
 - **Cost-bounded evaluation.**
   - *Band pass.* For each edge, visit only the pixels of its own band (its
     bounding box grown by 0.5 px), as `draw_stroke` does. Compute `d`,
@@ -281,8 +354,9 @@ else:                    cov = if inside(c) { 1 } else { 0 }
   - Probe points have arbitrary `y` and use the full edge list. They occur
     only in bands.
 - **Compositing:** one `src_over(pixel, f.colour, cov · unit(f.alpha))` per
-  pixel with `cov > 0`, in row-major order. That is exactly one composite
-  per pixel for the fill, as SPEC-0006 §2.5 requires.
+  pixel with `cov > 0`, in row-major order. SPEC-0006 §2.5's "exactly one
+  composite per pixel per primitive" becomes, for `Path`, **one composite
+  per pixel per paint: fill, then stroke** (finding 12).
 
 **Exact identities, which are the AC5 tests:**
 
@@ -291,7 +365,43 @@ else:                    cov = if inside(c) { 1 } else { 0 }
 | An axis-aligned rectangle with edges on pixel boundaries | Every pixel centre is at `d ≥ 0.5` from every edge, so it takes the `inside` branch and gets exactly 1 or 0. No fringe. |
 | An edge through a column of pixel centres | `d = 0` and the edge is a boundary, so `cov = unit(0.5) = 0.5`, which composites to byte `round(127.5) = 128` for white on black. This matches the stroke table in SPEC-0006 §2.5. |
 | An axis-aligned edge at any sub-pixel offset, away from corners | `cov = 0.5 ± d` equals the box-filtered area of the covered half-plane exactly. |
-| Corners | Not exact. A Monte-Carlo sweep (3000 random offsets and sizes of axis-aligned rectangles, 2026-09-27) measured `|Σcov − area| ≤ 0.888 px²` for four corners and a per-pixel error of at most 0.249. **Pinned tolerance: `|Σcov − w·h| ≤ 0.25 px²` per convex right-angle corner.** QA verifies it on an exhaustive 1/16-px grid of offsets. |
+| Corners | Not exact; see the bound below. |
+
+**Corner bound (AC5).** For an axis-aligned rectangle with
+**`min(w, h) ≥ 1 px`**:
+
+    |Σcov − w·h| ≤ 0.25 px² per convex right-angle corner
+
+**Why.**
+- *Away from corners, the error is zero.* Along a straight axis-aligned
+  side, `0.5 ± d` is the exact box-filtered area of a half-plane.
+- *So all error sits in the vertex regions.* Error arises only where a
+  pixel's footprint meets two sides. For the rectangle that is the 2 × 2
+  pixel neighbourhood of each vertex. There, the ramp uses the distance to
+  the *nearer* side (or to the vertex itself, when the pixel lies beyond
+  both sides), whereas the true coverage is the *product* of the two
+  one-dimensional overlaps.
+- *Per-pixel error is at most 0.25.* The worst case is a pixel centred
+  exactly on the vertex. There `d = 0`, so the ramp gives `cov = 0.5`,
+  while the true covered area is `0.5 × 0.5 = 0.25`.
+- *Corners are independent* once each side is at least 1 px. The vertex
+  regions of adjacent corners do not share a pixel whose footprint meets
+  both of each corner's sides.
+
+**Measured on an exhaustive grid** (architect, 2026-09-27): all 16 × 16
+sub-pixel offsets, with `w, h ∈ [1, 3]` px in 1/16 steps.
+- Worst total: `0.984375 px²`, which is 0.246 per corner. It occurs at
+  `18/16 × 18/16` with offset `7/16`.
+- The margin to the pinned `4 × 0.25` is **1.6 %**, and is stated as such.
+- The per-pixel error reaches exactly 0.25.
+
+**Below 1 px it breaks down.** For thinner rectangles the error grows with
+length, not with the number of corners. On 5 px-long rectangles the total
+error was 2.69 px² at `w = 1/16`, 2.25 at 1/4 and 1.5 at 1/2. This is the
+sliver regime noted above.
+
+**The tie rule is load-bearing.** The strict half-plane test gives the
+0.984 above; the inclusive reading gives 1.559, which would break AC5.
 
 ### 2.7 Strokes of paths
 
@@ -324,6 +434,10 @@ else:                    cov = if inside(c) { 1 } else { 0 }
   filled by the SVG renderer's implicit close, which matches §2.6.
 - `fill = None` writes `fill="none"` and omits `fill-opacity` and
   `fill-rule`.
+- **A path whose stroke paints nothing** (width not finite and > 0, or
+  alpha 0, the PPM guard's own test) writes `stroke="none"` and omits the
+  other stroke attributes. Fill-only paths are then honest in SVG too.
+  This touches no existing bytes, because only `Path` does it.
 - **Sink agreement (R-0012 AC8)** follows from both sinks using the same
   image-space outline and the same pinned `to_pixel` mapping (SPEC-0006
   §2.3). The ±1 px claim is scoped as in R-0006 AC2.
@@ -339,8 +453,13 @@ tested, so `reversed()` reliably makes a hole.
 | `circle(c, r)` | 1 closed subpath, 4 cubics starting at `(c.x + r, c.y)`, handle `K·r` with `const K: f64 = 4.0 * (SQRT_2 − 1.0) / 3.0` | **none** |
 | `arc(c, r, start, sweep)` | open, `m = ceil(|sweep| / (τ/4))` cubics, each with handle `4/3 · tan(θ/4) · r` | `cos`, `sin`, `tan` |
 | `sector(c, r, start, sweep)` | closed: `M c`, `L` to the arc start, the arc's cubics, `Z` | same as `arc` |
-| `rounded_rect(c, w, h, rad)` | closed; `rad` clamped to `[0, min(w, h)/2]`; corners are quarter-circle cubics with handle `K·rad`; `rad = 0` gives 4 lines | **none** |
+| `rounded_rect(c, w, h, rad)` | closed; `rad` clamped to `[0, min(w, h)/2]`; corners are quarter-circle cubics with handle `K·rad`; `rad = 0` gives a rectangle (3 lines + close) | **none** |
 | `polygon(pts)` | closed lines | none |
+
+**Generators never emit zero-length sides.** For example, `rounded_rect`
+with `rad = min(w, h)/2` omits its vanished straight sides. `rad = 0`
+emits exactly 3 `Line`s plus `close()`, because the closing side is
+implicit, so no zero-length closing chord exists.
 
 **Degenerate inputs** never panic (R-0012 AC7):
 
@@ -365,11 +484,38 @@ SPEC-0006 §2.7 carries over point by point:
   pixel.
 - **No transcendental in the raster path.** Flattening and filling use
   `+ − × ÷`, `sqrt`, `floor`, `ceil`, `round`, `min`/`max` and
-  comparisons. `mul_add` stays forbidden.
+  comparisons.
+- **The ban on `mul_add` and `hypot` is scoped (finding 10)** to the new
+  path, flattening and fill code, wherever it lives (`ppm.rs`, `path.rs`,
+  `shapes.rs`, the `scene.rs` path arm). QA checks it by grep over those
+  functions.
+- **One pre-existing exception is recorded, not fixed:** `ppm.rs`'s
+  `blend_pixel` (the R-0009 text path) already calls `mul_add`, despite the
+  module doc. Changing it could move R-0009 golden bytes, which AC10
+  forbids. It is left to its own change.
 - **Trig lives in the scene.** `arc` and `sector` call `cos`, `sin` and
-  `tan` at scene construction, the same caveat R-0003 carries. The golden
-  scene uses only `circle`, `rounded_rect` and `polygon`, which are
-  trig-free.
+  `tan` at scene construction, the same caveat R-0003 carries.
+
+**The golden scene is pinned (finding 11).**
+- **Canvas and view:** `PpmSink::with_view(dir, (320, 180), (3.2, 1.8))`,
+  so `s = 100` px per image unit, on a black background. `SvgSink` uses
+  the same view.
+- **Camera:** `Camera::default()` (orthographic). Every object has a
+  single-key track whose pose is `identity` or `translator` only. Every
+  vertex is in the `z = 0` model plane.
+- **Objects**, in insertion order:
+
+  1. `circle((−1.0, 0.0), 0.5)`, filled `#e9b23f` at alpha 1, stroke width
+     0 (so no stroke).
+  2. `rounded_rect((0.2, 0.0), 1.0, 0.8, 0.2)`, filled `#141417` at alpha
+     1, stroked `#ced1d9` with width 0.02. That is `r = 1` px, inside
+     SPEC-0006's placement regime.
+  3. A hole: `polygon` square with half-side 0.35 centred at `(1.15, 0.0)`,
+     plus the same square at half-side 0.15 `.reversed()`, in one path,
+     filled `#e0322a` at alpha 1 with no stroke.
+
+- **Trig-free:** `circle`, `rounded_rect` and `polygon` need only
+  `+ − × ÷` and the `const K`.
 
 ### 2.11 Compatibility (R-0012 AC10, AC11)
 
@@ -380,10 +526,20 @@ SPEC-0006 §2.7 carries over point by point:
 - **`Style` literals.**
   - 36 sites in this repo gain `fill: None`, mostly in tests. The PR lists
     them.
-  - **guion-video-creator** builds against `../motoreel` by path, so its 5
-    literal sites break the moment this merges. A companion PR there adds
-    `fill: None` and is merged in the same window. This is the one
-    cross-repo coupling.
+  - **Two downstream repositories build against `../motoreel` by path**
+    (finding 9), so their literals break the moment this merges:
+    - **guion-video-creator**, 5 sites: `guion-render/src/lib.rs:61`,
+      `guion-assemble/src/style.rs:14` and
+      `apps/guion-playground/src/render.rs:23/38/46`.
+    - **guion**, the legacy repository merged into guion-video-creator
+      (ENCARGO §0.2), 1 site: `crates/guion-assemble/src/lib.rs:87`.
+  - Companion PRs add `..Style::default()` rather than `fill: None`, so
+    the next field addition breaks nothing. They are merged in the same
+    window.
+  - Their `Shape` and `Prim2` matches use `_`, so the new variants do not
+    break them.
+  - Whether `guion` is formally retired is the owner's call; until then it
+    gets its one-line PR.
 - **Dependencies.** Zero new ones. `path.rs` and `shapes.rs` are std-only.
 - **Kernel build.** `--no-default-features` builds, lints and tests,
   because nothing here touches the `text` feature.
@@ -391,13 +547,23 @@ SPEC-0006 §2.7 carries over point by point:
 ### 2.12 The demo (R-0012 AC12)
 
 `examples/card/main.rs` renders a 1080 × 1920 clip at 30 fps, 3 s, to PPM
-with the documented ffmpeg command. It shows:
+with the documented ffmpeg command.
+
+- **Portrait view (finding 14).** The scene's `view` must match the sink's
+  view: `Scene::view = (1.8, 3.2)` and
+  `PpmSink::with_view(dir, (1080, 1920), (1.8, 3.2))`, so `s = 600` px per
+  unit. Otherwise `render` rejects the pair.
+
+It shows:
 
 - **Panel:** a `rounded_rect` filled `#141417` with a 1 px `#ffffff` stroke
-  at alpha 0.10.
+  at alpha 0.10. A 1 px hairline is `r = 0.5` px, below SPEC-0006's
+  `r ≥ 1` placement regime. That is acceptable for a demo and is noted, not
+  claimed.
 - **Friction circle:** a `circle` filled gold at alpha 0.16 and stroked
   steel, with a red `circle` dot orbiting on the rim. Its motion is a
-  `Track` of motor keys, not a new mechanism.
+  `Track` of motor keys, not a new mechanism. The track has **at least 3
+  keys per revolution**, because a 2-key slerp cannot make a full turn.
 - **Area under a curve:** a `polygon` of `y = k/x` samples closed down to
   the axis, filled gold-dim, with the curve stroked on top.
 
@@ -407,8 +573,10 @@ engine contains no brand.
 ## 3. Code outline
 
 ```rust
-// path.rs
+// path.rs: std-only, names no concrete point type
+#[derive(Clone, Debug, PartialEq)]
 pub enum Seg<P> { Line(P), Cubic(P, P, P) }
+#[derive(Clone, Debug, PartialEq)]
 pub struct Subpath<P> { pub start: P, pub segs: Vec<Seg<P>>, pub closed: bool }
 
 impl<P: Copy> Subpath<P> {
@@ -420,13 +588,16 @@ impl<P: Copy> Subpath<P> {
     pub fn reversed(&self) -> Self { /* walk segs backwards, swap handles */ }
 }
 
+/// de Casteljau halving at t = ½, generic over the caller's midpoint.
+pub fn split_cubic<P: Copy>(p: [P; 4], mid: impl Fn(&P, &P) -> P) -> ([P; 4], [P; 4]) { /* … */ }
+
+// ppm.rs: flattening lives here, on the module's own `Px = (f64, f64)`
 /// Chord count for ε = 0.1 px (§2.5): pure in the control points.
-pub(crate) fn chords(p0: Pt2, p1: Pt2, p2: Pt2, p3: Pt2) -> u32 {
-    let l = second_diff(p0, p1, p2).max(second_diff(p1, p2, p3));
+fn chords(p0: Px, p1: Px, p2: Px, p3: Px) -> u32 {
+    let l = second_diff(p0, p1, p2).max(second_diff(p1, p2, p3)); // sqrt(dx·dx + dy·dy), no hypot
     ((7.5 * l).sqrt().ceil() as u32).clamp(1, FLATTEN_MAX)
 }
 
-// ppm.rs
 fn draw(&mut self, prim: &Prim2) {
     match prim {
         Prim2::Text { .. } => …,
@@ -462,14 +633,13 @@ addition:
 
 ## 5. Open questions
 
-- **OQ-A (for the architect).** Should `path.rs` and `shapes.rs` be public
-  modules (`motoreel::path::Subpath`) or re-exported at the root like
-  `Pt2`? The spec proposes a public `path` module with `Seg` and `Subpath`
-  re-exported at the root, and a public `shapes` module, since generators
-  read best qualified (`shapes::circle`).
-- **OQ-B.** Is `PINHOLE_REL_TOL = 5e-5` the right default, or should the
-  scene expose it? The spec proposes a crate constant, which can be
-  promoted to a field additively.
+- **OQ-A: resolved (architect).** A public `path` module, with `Seg` and
+  `Subpath` re-exported at the root, and a public `shapes` module. This
+  matches the existing `label`, `ppm` and `svg` pattern.
+- **OQ-B: resolved (architect).** `PINHOLE_REL_TOL` is a crate constant;
+  promoting it to a field later is additive.
+- **Owner: the AC6 amendment** (§7, finding 1). Until the owner accepts
+  it, AC6's circle-band test cannot pass at R = 500 px.
 
 ## 6. Acceptance criteria
 
@@ -482,34 +652,50 @@ Each item maps to an R-0012 AC and becomes a QA test.
   fill composites before the stroke: a white-filled, red-stroked square has
   red on its boundary pixels, not white. Neither paints nothing.
 - [ ] **AC3.** The pentagram's central pentagon is filled with **no seam**:
-  its interior pixels are byte-equal to the fill colour. A same-orientation
+  its interior pixels are byte-equal to the fill colour. "Interior" means
+  a distance of **at least 0.5 px from the 10-vertex outer outline**, not
+  "winding number 2". Pixels near the star's concave inner vertices
+  correctly take the ramp. A same-orientation
   nested square is solid. An opposite-orientation one is a hole. An open
   subpath fills as if closed. Each case is asserted in both sinks: PPM by
   pixels, SVG by attributes plus the path data.
 - [ ] **AC4.**
   - Orthographic: emitted cubic control points equal the projected model
     control points bit-for-bit.
-  - Pinhole: dense sampling (10³ `t` per cubic) of the true projected curve
-    lies within `τ` of the emitted pieces.
+  - Pinhole: the **geometric nearest-point** distance, measured **in both
+    directions** between the true projected curve (10³ samples per cubic)
+    and the emitted pieces, is `≤ τ` for SVG and `≤ τ + 0.1 px` for PPM.
+    Same-parameter distance is not used (§2.4).
   - A control point behind the camera culls the whole path.
-- [ ] **AC5.** The three exact identities in §2.6, and the 0.25 px²
-  per-corner bound on a 1/16-px offset grid.
+- [ ] **AC5.**
+  - The three exact identities in §2.6.
+  - The 0.25 px² per-corner bound for `min(w, h) ≥ 1 px`, on the
+    exhaustive 16 × 16 offset grid with sizes in 1/16 steps.
+  - A test pins the strict half-plane tie rule: flipping it to inclusive
+    must fail the corner bound.
 - [ ] **AC6.**
-  - `chords` returns the §2.5 formula's value.
-  - The measured chord deviation is ≤ 0.1 px over a sweep of cubics.
+  - The measured chord deviation is ≤ 0.1 px over a sweep of random
+    cubics, including cusps. This sweep is the meaningful test; a test that
+    `chords` equals its own formula would only restate it.
   - The stroked-circle band property holds for R ∈ {10, 100, 500} px and
-    r ∈ {1, 2, 4} px.
+    r ∈ {1, 2, 4} px, with the band `R ± (r + 0.5 + 0.1 + 3·10⁻⁴·R)` from
+    the proposed AC6 amendment (§7).
 - [ ] **AC7.**
   - `K` equals `0.5522847498307936` bit-exactly.
   - Circle radial error is ≤ 3e-4·R.
   - Generator orientation is CCW (positive signed area).
   - Arc end points lie on the circle.
-  - The corner radius clamps, and `rad = 0` yields 4 lines.
+  - The corner radius clamps; `rad = 0` yields 3 `Line`s plus `close()`;
+    no generator emits a zero-length side.
   - Every degenerate input returns an empty `Vec` without panicking.
 - [ ] **AC8.** The SVG `<path>` grammar matches exactly on a fixture, and
   PPM/SVG boundary agreement is within ±1 px.
-- [ ] **AC9.** Two-render byte identity in both sinks. Trig-free goldens
-  `r0012_paths.{ppm,svg}` match byte-for-byte.
+- [ ] **AC9.**
+  - Two-render byte identity in both sinks.
+  - The pinned trig-free golden scene (§2.10) in `r0012_paths.{ppm,svg}`
+    matches byte-for-byte.
+  - The scoped grep finds no `mul_add` or `hypot` in path, fill or
+    flattening code.
 - [ ] **AC10.** All pre-existing goldens are byte-unchanged and all
   pre-existing tests pass. The only edits to old tests are `fill: None`,
   and they are listed.
@@ -527,7 +713,10 @@ Each item maps to an R-0012 AC and becomes a QA test.
 | 2026-09-27 | Only `Prim2::Path` honours `Style::fill` in this spec | `Point`, `Segment` and `Edges` have no area. Filling `Polyline` is additive later. This sharpens R-0012's OQ-3 rationale, which read "any primitive can be filled": any primitive can *carry* a fill, and this spec defines where it is *honoured* |
 | 2026-09-27 | Pinhole: adaptive subdivision into cubics, not flattening to lines | The SVG keeps curves, and the tolerance is checked where it is defined, in image space. De Casteljau halving uses only averages |
 | 2026-09-27 | Chord count from a closed-form bound on `‖B''‖`, not an adaptive search | A bound is a pure function of the control points. Adaptive flatness searches are equally deterministic but harder to state as a guarantee |
+| 2026-09-27 | Architect review: REQUEST CHANGES, all 15 findings applied | Flattening moved to `ppm.rs` on `Px`, removing the `prim` ↔ `path` cycle. The foot point and the strict half-plane tie rule are pinned, because the tie rule is load-bearing (0.984 vs 1.559 px²). Corner bound gains `min(w, h) ≥ 1 px`, exhaustive-grid numbers and a derivation. `δ` 1/64 → 2⁻²⁰. Zero-length edges skipped. Any non-finite edge means no fill. Pinhole wording corrected, with the compound bound stated. Both downstream repos listed. `mul_add` ban scoped and the pre-existing exception recorded. Golden scene and demo pinned. `Fill::solid` added. `stroke="none"` for no-stroke paths |
+| 2026-09-27 | **Proposed R-0012 AC6 amendment (owner approval pending).** The stroked-circle band becomes `R ± (r + 0.5 + 0.1 + 3·10⁻⁴·R)` | The 4-cubic circle deviates only *outward*, by up to 2.725·10⁻⁴·R (0.136 px at R = 500), and chords only sag inward, so nothing absorbs it. As written, AC6 contradicts R-0012's own "0.13 px at R = 500": measured lit extent reaches `r + 0.5 + 0.129`. The alternative, capping the test at R ≤ 333 px, would leave the requirement false for larger circles, so it was rejected |
 
 ## Changelog
 
 - 2026-09-27: created (Draft) from the accepted R-0012.
+- 2026-09-27: revised after architect review; all 15 findings applied, and the AC6 amendment proposed to the owner.
