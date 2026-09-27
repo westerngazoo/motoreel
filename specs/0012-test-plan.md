@@ -520,3 +520,20 @@ nothing the mutation evidence does not already show. **Practice from now
 on:** when an owner decision changes the spec during step 3 or 4, the
 suite is updated to red for that decision *before* implementation begins.
 
+## 10. AC12 in CI must encode, not skip (PR #3 review, finding 3)
+
+`ffmpeg_with_libx264` routes every probe failure through `skip_ac12(why)`.
+There are four reasons: `which` cannot run, no ffmpeg on PATH, ffmpeg
+cannot run, or ffmpeg has no libx264. The helper behaves in one of two
+ways:
+
+- **`MOTOREEL_REQUIRE_FFMPEG=1`:** it panics, so the test fails. CI's AC12
+  step sets this.
+- **Otherwise:** it prints `AC12 skipped: …` and the test passes, so a
+  machine without ffmpeg still runs the suite green.
+
+Before this change, a probe that could not spawn `which` returned `None`
+silently, and the CI grep guard passed without an encode. The same gap
+still exists in `tests/r0006_ppm_sink.rs`, but R-0012 AC10 freezes that
+file, so the fix belongs to its own change.
+
