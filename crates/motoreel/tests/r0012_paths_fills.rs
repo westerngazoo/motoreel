@@ -1900,6 +1900,58 @@ mod ac4 {
         }
     }
 
+    // AC4, second clause — the rendered outline "does *not* lie within
+    // tolerance of the cubic through the projected control points". In the
+    // same two scenes the within-τ test uses, that naive cubic strays more
+    // than τ from the true perspective image, and eval emits more pieces
+    // than were authored. So the within-τ test above cannot pass by
+    // projecting control points: its scenes discriminate.
+    #[test]
+    fn pinhole_is_not_the_cubic_through_the_projected_control_points() {
+        let tau = 5e-5 * 3.2_f64.min(1.8);
+        for depth in [2.5, 1.5] {
+            let (scene, model) = tilted_circle_scene(depth, Style::default());
+            let to_view = scene
+                .camera
+                .pose
+                .inverse()
+                .compose(&scene.objects[0].track.eval(0.0));
+            let project = |q: &Pt2| {
+                scene
+                    .camera
+                    .projection
+                    .project(&pga::Point::new(q.x, q.y, 0.0).transform(&to_view))
+                    .expect("in front of the camera")
+            };
+            let naive: Vec<Vec<Pt2>> = model
+                .iter()
+                .map(|s| sample(&s.map(project), 1000))
+                .collect();
+            let truth = true_image(&scene, &model, 1000);
+            let to_truth = Nearest::new(&tuples(&truth), 0.05);
+            let worst = naive
+                .iter()
+                .flatten()
+                .map(|q| to_truth.distance((q.x, q.y)))
+                .fold(0.0, f64::max);
+            eprintln!("AC4 depth {depth}: naive cubic strays {worst:e} (τ = {tau:e})");
+            assert!(
+                worst > tau,
+                "depth {depth}: the naive cubic stays within {worst:e} of the true image, \
+                 so this scene cannot tell subdivision from projecting control points \
+                 (τ = {tau:e})"
+            );
+
+            let prims = scene.eval(0.0);
+            let authored: usize = model.iter().map(|s| s.segs.len()).sum();
+            let emitted: usize = the_path(&prims).iter().map(|s| s.segs.len()).sum();
+            assert!(
+                emitted > authored,
+                "depth {depth}: {emitted} pieces emitted for {authored} authored cubics"
+            );
+        }
+    }
+
     // AC4 — pinhole through the raster sink: the rendered outline lies
     // within the compound bound τ + 0.1 px of the true perspective image
     // (§2.4). It is read from the pixels themselves. A stroke of radius r
