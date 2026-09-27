@@ -73,6 +73,22 @@ fn prim_parts(prim: &Prim2) -> (u8, Vec<Pt2>, Style) {
             segments.iter().flat_map(|(a, b)| [*a, *b]).collect(),
             *style,
         ),
+        // R-0012's sixth variant, added exactly as the `Edges` and `Text`
+        // arms were: every control point in order, and the style. Path
+        // behaviour is R-0012's to verify.
+        Prim2::Path { subpaths, style } => {
+            let mut points = Vec::new();
+            for sub in subpaths {
+                points.push(sub.start);
+                for seg in &sub.segs {
+                    match *seg {
+                        motoreel::Seg::Line(end) => points.push(end),
+                        motoreel::Seg::Cubic(h1, h2, end) => points.extend([h1, h2, end]),
+                    }
+                }
+            }
+            (5, points, *style)
+        }
     }
 }
 
@@ -145,6 +161,7 @@ fn golden_styles() -> [Style; 3] {
             },
             width: 0.5,
             alpha: 1.0,
+            fill: None,
         },
         Style {
             stroke: Rgb {
@@ -154,6 +171,7 @@ fn golden_styles() -> [Style; 3] {
             },
             width: 0.25,
             alpha: 0.5,
+            fill: None,
         },
         Style {
             stroke: Rgb {
@@ -163,6 +181,7 @@ fn golden_styles() -> [Style; 3] {
             },
             width: 2.0,
             alpha: 0.75,
+            fill: None,
         },
     ]
 }
@@ -347,16 +366,19 @@ fn ac4_style_passthrough_is_bit_exact_under_both_projections() {
         },
         width: 3.5,
         alpha: 0.25,
+        fill: None,
     };
     let sb = Style {
         stroke: Rgb { r: 255, g: 0, b: 1 },
         width: 0.125,
         alpha: 1.0,
+        fill: None,
     };
     let sc = Style {
         stroke: Rgb { r: 0, g: 0, b: 0 },
         width: 0.0,
         alpha: 0.5,
+        fill: None,
     };
     let cameras = [
         Camera::pinhole(Motor3::translator(0.0, 0.0, 4.0), 2.0),
@@ -671,6 +693,7 @@ fn spec_defaults_are_the_adjudicated_ones() {
             stroke: Rgb::WHITE,
             width: 0.01,
             alpha: 1.0,
+            fill: None,
         }
     );
     assert_eq!(
@@ -823,7 +846,7 @@ prop_compose! {
         width in 0.0f64..4.0,
         alpha in 0.0f64..=1.0,
     ) -> Style {
-        Style { stroke: Rgb { r, g, b }, width, alpha }
+        Style { stroke: Rgb { r, g, b }, width, alpha, fill: None }
     }
 }
 

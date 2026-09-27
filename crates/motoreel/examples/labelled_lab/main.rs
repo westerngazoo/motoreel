@@ -36,6 +36,7 @@ fn text(stroke: Rgb) -> Style {
         stroke,
         width: 0.0,
         alpha: 1.0,
+        fill: None,
     }
 }
 
@@ -67,6 +68,7 @@ fn main() -> std::io::Result<()> {
             stroke: WHITE,
             width: 0.02,
             alpha: 1.0,
+            fill: None,
         })
         .with_track(screw),
     );

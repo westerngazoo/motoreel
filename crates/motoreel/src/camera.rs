@@ -27,7 +27,13 @@ impl Projection {
     /// Project one **view-space** point to image space; `None` means
     /// culled. Never returns a non-finite coordinate (SPEC-0002 §2.5).
     pub fn project(&self, view_point: &pga::Point) -> Option<Pt2> {
-        let (x, y, z) = view_point.to_euclidean();
+        self.project_euclidean(view_point.to_euclidean())
+    }
+
+    /// [`Projection::project`] for a view-space point already in Euclidean
+    /// `(x, y, z)` form — what pinhole path subdivision works in
+    /// (SPEC-0012 §2.4), so its pieces project with the same arithmetic.
+    pub(crate) fn project_euclidean(&self, (x, y, z): (f64, f64, f64)) -> Option<Pt2> {
         let d = -z; // the camera looks along −z (SPEC-0002 §2.1)
         if !d.is_finite() || d < Self::NEAR {
             return None; // behind / at plane / degenerate — cull, never NaN

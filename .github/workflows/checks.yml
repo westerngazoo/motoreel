@@ -25,14 +25,23 @@ jobs:
         with:
           components: clippy, rustfmt
 
-      # AC6's two probes skip when ffmpeg is absent; installing it makes
-      # them run, so the encode path is exercised end to end.
-      - name: ffmpeg, so R-0006 AC6 runs instead of skipping
+      # R-0006 AC6's two probes and R-0012 AC12's encode skip when ffmpeg
+      # is absent; installing it makes them run, so the encode path is
+      # exercised end to end.
+      - name: ffmpeg, so the encode probes run instead of skipping
         run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
 
       - name: tests
         working-directory: motoreel
         run: cargo test --workspace
+
+      # The kernel: `--no-default-features` is motoreel on garust alone
+      # (project-specifics.md). R-0012 AC11 promises it still builds and
+      # tests, and crates/motoreel/Cargo.toml says CI builds both ways;
+      # until this step, nothing did.
+      - name: kernel tests (no default features)
+        working-directory: motoreel
+        run: cargo test -p motoreel --no-default-features
 
       - name: lints
         working-directory: motoreel
@@ -58,5 +67,31 @@ jobs:
             -- --nocapture 2>&1 | tee /tmp/ac6.txt
           if grep -q "AC6 skipped" /tmp/ac6.txt; then
             echo "AC6 skipped on a runner that has ffmpeg — the probe is wrong"
+            exit 1
+          fi
+
+      # The same guard for R-0012 AC12: the card demo must encode for real
+      # here. `--exact` plus the "1 passed" check also fail the step if the
+      # test is renamed and the filter silently matches nothing.
+      # MOTOREEL_REQUIRE_FFMPEG=1 makes the test itself panic on any path
+      # that would skip, so a probe that exits without printing the skip
+      # note can no longer pass as "1 passed"; the grep stays as a second
+      # line of defence.
+      - name: AC12 encoded for real, and did not skip
+        working-directory: motoreel
+        shell: bash
+        env:
+          MOTOREEL_REQUIRE_FFMPEG: "1"
+        run: |
+          set -o pipefail
+          cargo test -p motoreel --test r0012_paths_fills \
+            ac12::stock_ffmpeg_encodes_the_card -- --exact --nocapture 2>&1 \
+            | tee /tmp/ac12.txt
+          if grep -q "AC12 skipped" /tmp/ac12.txt; then
+            echo "AC12 skipped on a runner that has ffmpeg — the probe is wrong"
+            exit 1
+          fi
+          if ! grep -q "test result: ok. 1 passed" /tmp/ac12.txt; then
+            echo "the AC12 encode test did not run"
             exit 1
           fi

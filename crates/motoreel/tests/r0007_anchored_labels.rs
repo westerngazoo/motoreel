@@ -118,6 +118,7 @@ fn ac1_label_fields_round_trip_into_the_emitted_text() {
         },
         width: 0.037,
         alpha: 0.25,
+        fill: None,
     };
     let mut scene = Scene::new(1.0);
     scene.add_label(
@@ -667,6 +668,7 @@ fn labels_scene() -> Scene {
         },
         width: 0.01,
         alpha: 1.0,
+        fill: None,
     };
     let orange = Style {
         stroke: Rgb {
@@ -676,6 +678,7 @@ fn labels_scene() -> Scene {
         },
         width: 0.01,
         alpha: 1.0,
+        fill: None,
     };
     let mut scene = Scene::new(1.0);
     let id = scene.add(

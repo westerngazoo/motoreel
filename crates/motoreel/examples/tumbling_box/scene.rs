@@ -63,6 +63,7 @@ pub fn scene() -> Scene {
             },
             width: 0.012,
             alpha: 1.0,
+            fill: None,
         })
         .with_track(tracks.remove(0));
 

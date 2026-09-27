@@ -9,15 +9,20 @@
 //! complete: R-0001 (`Track` + `Ease`), R-0002 (scene, camera,
 //! projection), and R-0003 (`SvgSink` and the render walk). M2 begins
 //! with R-0004: recording a physics rollout into ordinary motor tracks.
+//! The creator pipeline (MC) adds R-0006 (`PpmSink`), R-0007 (anchored
+//! labels), R-0009 (real type) and R-0012 (paths and fills: [`path`],
+//! [`shapes`], [`Fill`]).
 
 mod camera;
 mod ease;
 pub mod label;
 mod object;
+pub mod path;
 pub mod ppm;
 mod prim;
 mod record;
 mod scene;
+pub mod shapes;
 pub mod sink;
 pub mod svg;
 mod track;
@@ -26,8 +31,9 @@ pub use camera::{Camera, Projection};
 pub use ease::Ease;
 pub use label::{Anchor, Label, ScreenAnchor};
 pub use object::{Object, Shape};
+pub use path::{Seg, Subpath};
 pub use ppm::PpmSink;
-pub use prim::{Align, Prim2, Pt2, Rgb, Style};
+pub use prim::{Align, Fill, Prim2, Pt2, Rgb, Style};
 pub use record::{record, RecordError};
 pub use scene::{ObjectId, Scene};
 pub use sink::FrameSink;

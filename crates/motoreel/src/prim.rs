@@ -1,9 +1,16 @@
 //! The 2D output vocabulary — the sink-facing boundary.
 //!
 //! Depends on `std` alone: no garust type crosses this module, which is
-//! the concrete form of "the SVG sink never learns 3D existed".
+//! the concrete form of "the SVG sink never learns 3D existed". Paths
+//! borrow their generic shape from [`crate::path`], which is std-only too.
 
-/// A point in image space: `x` right, `y` up, origin on the optical axis.
+use crate::path::Subpath;
+
+/// A point in a plane: `x` right, `y` up.
+///
+/// In image space the origin is on the optical axis. The shape generators
+/// ([`crate::shapes`]) emit it too, as planar model coordinates that
+/// [`crate::Object::planar`] lifts to `z = 0` (SPEC-0012 §2.3).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Pt2 {
     /// Rightward image coordinate.
@@ -12,7 +19,7 @@ pub struct Pt2 {
     pub y: f64,
 }
 
-/// An sRGB stroke color, 8 bits per channel.
+/// An sRGB color, 8 bits per channel: a stroke's or a fill's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Rgb {
     /// Red channel.
@@ -34,7 +41,31 @@ impl Rgb {
     pub const BLACK: Rgb = Rgb { r: 0, g: 0, b: 0 };
 }
 
-/// Stroke style — R-0002's minimal vocabulary: color, width, alpha.
+/// Interior paint: one flat color and an opacity (R-0012 AC2).
+///
+/// Gradients are a later requirement. Contract, as for [`Style`]: `alpha`
+/// in `[0, 1]`, documented, not validated. Sinks read it through a total
+/// clamp, and a non-finite `alpha` paints nothing (SPEC-0012 §2.13).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Fill {
+    /// Fill color.
+    pub colour: Rgb,
+    /// Fill opacity, 0 transparent to 1 opaque.
+    pub alpha: f64,
+}
+
+impl Fill {
+    /// A flat fill of `colour` at `alpha`.
+    ///
+    /// The constructor downstream code should use: the gradients
+    /// requirement can then grow `Fill` without breaking literals again.
+    pub const fn solid(colour: Rgb, alpha: f64) -> Self {
+        Fill { colour, alpha }
+    }
+}
+
+/// Paint style — R-0002's stroke vocabulary (color, width, alpha) plus
+/// R-0012's optional fill.
 ///
 /// Contracts (documented, not validated — style is author data carried
 /// verbatim to the emitted primitive): `width` finite and ≥ 0, in image
@@ -47,16 +78,23 @@ pub struct Style {
     pub width: f64,
     /// Stroke opacity, 0 transparent to 1 opaque.
     pub alpha: f64,
+    /// Interior paint (R-0012 OQ-3). `None` is the behaviour every
+    /// primitive had before paths.
+    ///
+    /// Honoured by [`Prim2::Path`] only; every other variant ignores it
+    /// (SPEC-0012 §2.2). A fill-only path has a `width` of 0.
+    pub fill: Option<Fill>,
 }
 
 impl Default for Style {
     /// White, width 0.01 (≈ 6 px at 1080p in SPEC-0003's default view),
-    /// opaque.
+    /// opaque, no fill.
     fn default() -> Self {
         Style {
             stroke: Rgb::WHITE,
             width: 0.01,
             alpha: 1.0,
+            fill: None,
         }
     }
 }
@@ -86,7 +124,8 @@ pub enum Prim2 {
     Point {
         /// Image position.
         at: Pt2,
-        /// Stroke style, passed through unchanged.
+        /// Stroke style, passed through unchanged. `fill` is ignored: a
+        /// filled dot is a [`crate::shapes::circle`] (R-0012 OQ-4).
         style: Style,
     },
     /// A straight stroke from `a` to `b`.
@@ -95,7 +134,8 @@ pub enum Prim2 {
         a: Pt2,
         /// Stroke end.
         b: Pt2,
-        /// Stroke style, passed through unchanged.
+        /// Stroke style, passed through unchanged. `fill` is ignored: a
+        /// segment encloses no area.
         style: Style,
     },
     /// An open polyline through `points` in order (< 2 points draws
@@ -103,7 +143,8 @@ pub enum Prim2 {
     Polyline {
         /// Image positions, in order.
         points: Vec<Pt2>,
-        /// Stroke style, passed through unchanged.
+        /// Stroke style, passed through unchanged. `fill` is ignored
+        /// (SPEC-0012 §2.2): an area is a [`Prim2::Path`].
         style: Style,
     },
     /// A wireframe: disjoint segments sharing one style, drawn as one
@@ -111,7 +152,8 @@ pub enum Prim2 {
     Edges {
         /// Image-space endpoint pairs, in order.
         segments: Vec<(Pt2, Pt2)>,
-        /// Stroke style, passed through unchanged.
+        /// Stroke style, passed through unchanged. `fill` is ignored:
+        /// disjoint segments enclose no area.
         style: Style,
     },
     /// A single line of printable-ASCII text pinned to one image-space
@@ -141,7 +183,25 @@ pub enum Prim2 {
         /// registry the sink was built with. A plain `usize`, not a typed
         /// id, so the core keeps no font dependency of its own.
         face: usize,
-        /// Fill colour and opacity; [`Style::width`] is unused for text.
+        /// Fill colour and opacity; [`Style::width`] is unused for text,
+        /// and so is [`Style::fill`]: glyph coverage is painted in
+        /// `stroke`.
+        style: Style,
+    },
+    /// An outline of straight and cubic pieces, stroked, filled, or both
+    /// (R-0012, SPEC-0012 §2.3).
+    ///
+    /// Invariants upheld by [`crate::Scene::eval`]: every coordinate is
+    /// finite, there is at least one subpath, and no subpath is empty of
+    /// segments. Sinks paint the fill first and the stroke second, each
+    /// composited once per pixel (SVG's `paint-order: normal`). The fill
+    /// follows the nonzero winding rule and treats every subpath as
+    /// closed; the stroke draws a closing segment only where `closed` is
+    /// set.
+    Path {
+        /// Image-space subpaths, in order.
+        subpaths: Vec<Subpath<Pt2>>,
+        /// Stroke and fill, passed through unchanged.
         style: Style,
     },
 }
@@ -157,5 +217,6 @@ mod tests {
         assert_eq!(s.stroke, Rgb::WHITE);
         assert_eq!(s.width, 0.01);
         assert_eq!(s.alpha, 1.0);
+        assert_eq!(s.fill, None);
     }
 }

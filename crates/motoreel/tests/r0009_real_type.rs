@@ -61,6 +61,7 @@ fn white() -> Style {
         stroke: Rgb::WHITE,
         width: 0.0,
         alpha: 1.0,
+        fill: None,
     }
 }
 

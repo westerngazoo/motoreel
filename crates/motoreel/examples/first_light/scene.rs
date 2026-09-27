@@ -41,6 +41,7 @@ pub fn scene() -> Scene {
         },
         width: 0.02,
         alpha: 1.0,
+        fill: None,
     })
     .with_track(screw);
 
@@ -53,6 +54,7 @@ pub fn scene() -> Scene {
             },
             width: 0.06,
             alpha: 1.0,
+            fill: None,
         })
         .with_track(orbit);
 
