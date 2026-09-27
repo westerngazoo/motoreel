@@ -501,3 +501,22 @@ scratch copy of the implementation, never to `src/`:
 
 **No new test disagrees with the implementation.** The one open reading is
 §6 item 16.
+
+## 9. Recorded deviation: TDD order after step 3 (PR #3 review, finding 2)
+
+The red suite (`229cc24`) precedes the implementation (`1dc06a4`), as
+required. The owner's step-3 decisions (`651e14d`: counter-clockwise
+normalisation of a negative sweep, `polygon` dedup, infinite inputs,
+non-finite fill alpha) landed **before** the implementation, but the tests
+encoding them landed **after** it, in `0cfc591`. As a result:
+
+- the commits `1dc06a4`…`8291259` carry one failing test, the red suite's
+  clockwise-arc expectation, which those decisions made stale;
+- the new decision tests were never red against a missing implementation.
+  Instead they were shown to bite by nine targeted mutations (§8).
+
+The history is left as it is: it is pushed, and rewriting it would buy
+nothing the mutation evidence does not already show. **Practice from now
+on:** when an owner decision changes the spec during step 3 or 4, the
+suite is updated to red for that decision *before* implementation begins.
+

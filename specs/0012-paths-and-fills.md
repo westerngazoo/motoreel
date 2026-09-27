@@ -1,6 +1,6 @@
 # SPEC-0012 — Paths and fills
 
-- **Status:** **Accepted** (2026-09-27, owner). The architect review's 15 findings are applied and the R-0012 AC6 amendment is approved. Next: QA red tests (loop step 3)
+- **Status:** **Accepted** (2026-09-27, owner). The architect review's 15 findings are applied and the R-0012 AC6 amendment is approved. Implemented and in review as westerngazoo/motoreel#3 (architect: APPROVE, conditional on the companion PRs of §2.11)
 - **Realizes:** R-0012
 - **Author:** Claude (main session) with owner
 - **Created:** 2026-09-27
@@ -87,6 +87,10 @@ pub struct Subpath<P> {
   stays generic.
 - The derives are required because `Shape` and `Prim2` derive `Clone,
   Debug, PartialEq`.
+- **`Seg` also derives `Copy`.** That is public API, since every variant
+  holds only `P: Copy` points. It lets flattening and projection pass
+  segments by value. `Subpath` is not `Copy`, because it owns a `Vec`.
+  Recorded after the PR review.
 
 ### 2.2 Fill paint (`prim.rs`)
 
@@ -154,6 +158,10 @@ pub enum Prim2 { …, Path { subpaths: Vec<Subpath<Pt2>>, style: Style } }
   - A non-finite coordinate anywhere, including in a projected pinhole
     piece, culls the **whole** primitive. This keeps SPEC-0002 §2.5's
     invariant total.
+  - **Order: cull, then drop.** Every control point must project,
+    including the start point of a subpath that has no segments, before
+    empty subpaths are dropped. This matches AC4's "any control point"
+    (recorded after the PR review).
 
 ### 2.4 Projection (`scene.rs`), realizing OQ-1
 
@@ -413,6 +421,22 @@ sliver regime noted above.
 **The tie rule is load-bearing.** The strict half-plane test gives the
 0.984 above; the inclusive reading gives 1.559, which would break AC5.
 
+**Hole corners are not bounded by AC5, and are worse.** AC5 bounds
+*convex* corners only. The PR review measured a square hole in a filled
+cell (four hole corners) with `w, h ∈ [1, 3]` px on the 1/16-px offset
+grid.
+- The worst case is **`|Σcov − area| = 2.24 px²`**, at `w = 1`,
+  `h = 1.625`, offset `(8/16, 15/16)`.
+- The cause is a pixel centre on an edge's line just past a hole corner:
+  it lies inside the fill but takes `s = −d` under the lexicographic
+  `(d, s)` tie-break.
+- Reversing that tie-break (prefer `+d`) lowers the worst case to 1.55
+  and still passes the convex suite. Neither δ nor the tie-break
+  direction is currently pinned by a test.
+
+**Whether to reverse the tie-break is an owner decision.** A test pinning
+whichever direction is chosen follows it (PR #3 review, finding 4).
+
 ### 2.7 Strokes of paths
 
 - `push_segments` gains a `Prim2::Path` arm: flatten (§2.5) and push each
@@ -553,8 +577,18 @@ SPEC-0006 §2.7 carries over point by point:
   - Companion PRs add `..Style::default()` rather than `fill: None`, so
     the next field addition breaks nothing. They are merged in the same
     window.
-  - Their `Shape` and `Prim2` matches use `_`, so the new variants do not
-    break them.
+  - **Correction (PR review):** `guion-video-creator`'s
+    `object_from_shape` (`guion-assemble/src/lib.rs`) matches `Shape`
+    **exhaustively**, so it also needs a `Path` arm. `guion` maps from its
+    own enum and needs only the literal.
+  - Companion PRs: **westerngazoo/guion-video-creator#7** (5 literals and
+    the `Path` arm) and **westerngazoo/guion#1** (1 literal).
+    - Both were verified locally against this branch: clippy
+      `-D warnings` and tests green, including guion-video-creator's Tauri
+      apps.
+    - **Merge order: motoreel#3 first.** guion-video-creator's CI checks
+      out motoreel's default branch, and before this merges neither
+      `Shape::Path` nor `fill` exists there.
   - Inside this repo, two test helpers match `Prim2` exhaustively without
     `_`: `prim_parts` in `r0002_scene_camera.rs:61` and in
     `r0004_physics_playback.rs:227`. Each gains a `Path` arm. R-0012 AC10
@@ -670,6 +704,13 @@ addition:
   only.
 - **A non-finite fill alpha** paints nothing in PPM. In SVG it writes
   `fill="none"` rather than `fill-opacity="NaN"`, so the sinks agree.
+  This includes `+∞`.
+  - **This is deliberately asymmetric with strokes.** A stroke alpha of
+    `+∞` still paints as 1, because SPEC-0006's total `unit` helper clamps
+    it, and R-0012 AC10 freezes that behaviour.
+  - Fill alphas are new, so they take the stricter reading. The asymmetry
+    is recorded here after the PR review rather than left for a reader to
+    discover.
 - **SVG `d` whitespace** is exactly: commands separated by one space, the
   coordinates of a point joined by a comma, and the points of a `C`
   separated by one space, e.g. `M 1,2 C 3,4 5,6 7,8 Z`. The AC8 fixture
@@ -769,3 +810,4 @@ Each item maps to an R-0012 AC and becomes a QA test.
 - 2026-09-27: revised after architect review; all 15 findings applied, and the AC6 amendment proposed to the owner.
 - 2026-09-27: **Accepted** by the owner, with the AC6 amendment approved.
 - 2026-09-27: QA step-3 findings resolved by the owner. AC10 amended; generator orientation settled (§2.9); §2.6 vertex wording corrected; clarifications recorded in §2.13; CI steps added (§2.11).
+- 2026-09-27: PR #3 architect review (APPROVE, conditional on the companion PRs) recorded: `Copy` on `Seg`, cull-then-drop order, the +∞ alpha asymmetry, hole-corner error with the tie-break decision left to the owner, companion PRs and the §2.11 correction.
