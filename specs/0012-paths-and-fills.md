@@ -382,8 +382,18 @@ else:                    cov = if inside(c) { 1 } else { 0 }
   both sides), whereas the true coverage is the *product* of the two
   one-dimensional overlaps.
 - *Per-pixel error is at most 0.25.* The worst case is a pixel centred
-  exactly on the vertex. There `d = 0`, so the ramp gives `cov = 0.5`,
-  while the true covered area is `0.5 × 0.5 = 0.25`.
+  exactly on the vertex. Its true covered area is `0.5 × 0.5 = 0.25`
+  (convex corner) or `0.75` (a hole's corner). What the rule paints there
+  depends on the corner's orientation:
+  - where a probe classifies an adjacent edge as boundary, `d = 0` and the
+    ramp gives `0.5`;
+  - where the probes at the shared vertex classify neither edge as
+    boundary, the pixel takes the `inside` branch and gets `0` (convex)
+    or `1` (hole corner).
+
+  Every case is within 0.25 of the true area. An earlier draft said the
+  vertex pixel always gets 0.5; QA found this false at one orientation
+  (step 3), and the bound is unaffected.
 - *Corners are independent* once each side is at least 1 px. The vertex
   regions of adjacent corners do not share a pixel whose footprint meets
   both of each corner's sides.
@@ -445,8 +455,15 @@ sliver regime noted above.
 ### 2.9 Shape generators (`shapes.rs`, std-only)
 
 Every generator returns `Vec<Subpath<Pt2>>` in planar model coordinates.
-Orientation is **counter-clockwise** in y-up coordinates, stated once and
-tested, so `reversed()` reliably makes a hole.
+**Orientation (owner decision, 2026-09-27):**
+- `circle`, `arc`, `sector` and `rounded_rect` always return
+  **counter-clockwise** subpaths in y-up coordinates. A negative `sweep`
+  describes the same region and is normalised to the counter-clockwise
+  traversal.
+- `polygon` **keeps the caller's vertex order**. That is the natural way
+  to author a hole, which needs the opposite orientation.
+
+So `reversed()` on any shape generator's output reliably makes a hole.
 
 | fn | output | trig? |
 |---|---|---|
@@ -538,6 +555,15 @@ SPEC-0006 §2.7 carries over point by point:
     window.
   - Their `Shape` and `Prim2` matches use `_`, so the new variants do not
     break them.
+  - Inside this repo, two test helpers match `Prim2` exhaustively without
+    `_`: `prim_parts` in `r0002_scene_camera.rs:61` and in
+    `r0004_physics_playback.rs:227`. Each gains a `Path` arm. R-0012 AC10
+    was amended to allow exactly this.
+- **CI gains two steps in the implementation PR** (found by QA):
+  - `cargo test -p motoreel --no-default-features`, because AC11 promises
+    the kernel build and nothing checked it;
+  - a guard that fails the job if the AC12 encode test reports it was
+    skipped while ffmpeg is installed.
   - Whether `guion` is formally retired is the owner's call; until then it
     gets its one-line PR.
 - **Dependencies.** Zero new ones. `path.rs` and `shapes.rs` are std-only.
@@ -631,6 +657,28 @@ addition:
   capsules.
 - **Exact area coverage at corners.** It is bounded (§2.6), not eliminated.
 
+### 2.13 Clarifications (QA step 3, owner-approved 2026-09-27)
+
+- **`split_cubic`** takes the array form of §3,
+  `split_cubic(p: [P; 4], mid)`. §2.1's five-argument wording is
+  superseded.
+- **`polygon(pts: &[Pt2])`.** Consecutive duplicate vertices, including
+  the last equalling the first, are dropped, per the no-zero-length-sides
+  rule. Fewer than 3 distinct vertices remaining gives an empty `Vec`.
+- **An infinite `r`, `rad`, `w`, `h` or `sweep`** counts as non-finite and
+  returns an empty `Vec`. The `|sweep| > τ` clamp applies to finite values
+  only.
+- **A non-finite fill alpha** paints nothing in PPM. In SVG it writes
+  `fill="none"` rather than `fill-opacity="NaN"`, so the sinks agree.
+- **SVG `d` whitespace** is exactly: commands separated by one space, the
+  coordinates of a point joined by a comma, and the points of a `C`
+  separated by one space, e.g. `M 1,2 C 3,4 5,6 7,8 Z`. The AC8 fixture
+  pins it.
+- **The card example** is split into `examples/card/main.rs` and
+  `examples/card/scene.rs` with `pub fn scene() -> Scene`, following
+  R-0003's precedent, so that the AC12 test builds the same scene the
+  example renders.
+
 ## 5. Open questions
 
 - **OQ-A: resolved (architect).** A public `path` module, with `Seg` and
@@ -720,3 +768,4 @@ Each item maps to an R-0012 AC and becomes a QA test.
 - 2026-09-27: created (Draft) from the accepted R-0012.
 - 2026-09-27: revised after architect review; all 15 findings applied, and the AC6 amendment proposed to the owner.
 - 2026-09-27: **Accepted** by the owner, with the AC6 amendment approved.
+- 2026-09-27: QA step-3 findings resolved by the owner. AC10 amended; generator orientation settled (§2.9); §2.6 vertex wording corrected; clarifications recorded in §2.13; CI steps added (§2.11).

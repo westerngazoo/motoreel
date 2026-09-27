@@ -200,9 +200,15 @@ has to say what "correct" means under a pinhole camera (AC4, OQ-1).
 - **AC10. Nothing already rendered moves.**
   - Every existing golden fixture is **byte-unchanged**: R-0003, R-0006,
     and R-0007/R-0009 where they exist.
-  - The existing test suites pass unmodified, except for mechanical
-    edits that the `Style` change (OQ-3) forces on struct literals. Those
-    edits are listed in the PR.
+  - The existing test suites pass unmodified, except for two kinds of
+    mechanical edit, both listed in the PR:
+    - the struct literals the `Style` change (OQ-3) forces;
+    - one added arm in each existing test helper that matches `Prim2`
+      exhaustively without `_` (`r0002_scene_camera.rs`,
+      `r0004_physics_playback.rs`). A new variant must make such matches
+      stop compiling; that is the point of writing them without `_`.
+      R-0004 and R-0007 made the same edit (amended 2026-09-27,
+      owner-approved).
 
 - **AC11. The kernel stays thin.**
   - Zero new dependencies.
@@ -284,9 +290,11 @@ has to say what "correct" means under a pinhole camera (AC4, OQ-1).
 | 2026-09-27 | **OQ-3:** `Style` gains `fill: Option<Fill>` | Fill lives in the one style every primitive already carries, so it can be honoured on more variants later without another type change. SPEC-0012 honours it on `Path`. The churn is mechanical: 36 literal sites here (mostly tests) and 5 in guion-video-creator (owner) |
 | 2026-09-27 | **OQ-4:** `Shape::Point` is unchanged; filled dots come from the circle generator | A point stays a point. The generator is trig-free and exact, so the dot costs nothing extra (owner) |
 | 2026-09-27 | **AC6 amended:** the outer circle band gains `+ 3·10⁻⁴·R` | The 4-cubic circle (AC7) bulges up to 2.725·10⁻⁴·R outward and chords only sag inward, so the original band was unreachable above R ≈ 333 px, contradicting §2's own "0.13 px at R = 500". Found by the SPEC-0012 architect review, finding 1; approved by the owner |
+| 2026-09-27 | **AC10 amended:** existing exhaustive `Prim2` matches in tests may gain the new arm | Found by QA (step 3). AC10's wording forbade an edit that the no-wildcard discipline makes compulsory. R-0004 and R-0007 set the precedent. Approved by the owner |
 
 ## Changelog
 
 - 2026-09-27: created as a Draft for discussion with the owner.
 - 2026-09-27: **Accepted**. OQ-1 to OQ-4 settled on the recommendations; §5 is kept for the record.
 - 2026-09-27: AC6 amended (owner-approved).
+- 2026-09-27: AC10 amended (owner-approved).
