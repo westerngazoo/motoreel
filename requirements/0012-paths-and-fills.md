@@ -1,6 +1,6 @@
 # R-0012 — Paths and fills
 
-- **Status:** Draft
+- **Status:** **Accepted** (2026-09-27, owner): all four open questions settled on the recommendations
 - **Milestone:** MC (the creator pipeline)
 - **Owner:** Gustavo Delgadillo (westerngazoo)
 - **Created:** 2026-09-27
@@ -272,8 +272,12 @@ has to say what "correct" means under a pinhole camera (AC4, OQ-1).
 
 | Date | Decision | Rationale |
 |------|----------|-----------|
-| | | |
+| 2026-09-27 | **OQ-1:** `Prim2` carries image-space cubics. Orthographic eval projects control points; pinhole eval subdivides in view space until each piece projects within tolerance | Affine maps preserve Béziers exactly, so the common case loses nothing, and the SVG keeps real curves. The projective case is honest about its tolerance instead of silently wrong (owner) |
+| 2026-09-27 | **OQ-2:** fill coverage is the existing one-pixel ramp on the signed distance to the outline, with the sign from the nonzero winding number at the pixel centre | Closed-form per pixel, so SPEC-0006 §2.7's determinism argument holds unamended, and fill and stroke agree on where the boundary is. Corner error is bounded by AC5 rather than eliminated (owner) |
+| 2026-09-27 | **OQ-3:** `Style` gains `fill: Option<Fill>` | Fill lives in the one style every primitive already carries, so it can be honoured on more variants later without another type change. SPEC-0012 honours it on `Path`. The churn is mechanical: 36 literal sites here (mostly tests) and 5 in guion-video-creator (owner) |
+| 2026-09-27 | **OQ-4:** `Shape::Point` is unchanged; filled dots come from the circle generator | A point stays a point. The generator is trig-free and exact, so the dot costs nothing extra (owner) |
 
 ## Changelog
 
 - 2026-09-27: created as a Draft for discussion with the owner.
+- 2026-09-27: **Accepted**. OQ-1 to OQ-4 settled on the recommendations; §5 is kept for the record.

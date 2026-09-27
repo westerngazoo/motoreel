@@ -37,4 +37,4 @@ the requirement(s) it satisfies. The mapping is maintained in
 | [R-0002](0002-scene-camera.md) | Scene, objects, motor-posed camera, projection | M1 | Met |
 | [R-0003](0003-svg-sink.md) | `SvgSink` and the first rendered animation | M1 | Met |
 | [R-0004](0004-physics-playback.md) | Physics playback: record a simulated rollout into motor tracks | M2 | Met |
-| [R-0012](0012-paths-and-fills.md) | Paths and fills: cubic Bézier paths, nonzero fills, shape generators | MC | Draft |
+| [R-0012](0012-paths-and-fills.md) | Paths and fills: cubic Bézier paths, nonzero fills, shape generators | MC | Accepted |
