@@ -1,6 +1,6 @@
 # SPEC-0012 — Paths and fills
 
-- **Status:** Draft, revised after architect review (2026-09-27): all 15 findings applied, and one R-0012 AC6 amendment awaits the owner (§7)
+- **Status:** **Accepted** (2026-09-27, owner). The architect review's 15 findings are applied and the R-0012 AC6 amendment is approved. Next: QA red tests (loop step 3)
 - **Realizes:** R-0012
 - **Author:** Claude (main session) with owner
 - **Created:** 2026-09-27
@@ -638,8 +638,7 @@ addition:
   matches the existing `label`, `ppm` and `svg` pattern.
 - **OQ-B: resolved (architect).** `PINHOLE_REL_TOL` is a crate constant;
   promoting it to a field later is additive.
-- **Owner: the AC6 amendment** (§7, finding 1). Until the owner accepts
-  it, AC6's circle-band test cannot pass at R = 500 px.
+- **Owner: the AC6 amendment: resolved** (approved 2026-09-27).
 
 ## 6. Acceptance criteria
 
@@ -679,7 +678,7 @@ Each item maps to an R-0012 AC and becomes a QA test.
     `chords` equals its own formula would only restate it.
   - The stroked-circle band property holds for R ∈ {10, 100, 500} px and
     r ∈ {1, 2, 4} px, with the band `R ± (r + 0.5 + 0.1 + 3·10⁻⁴·R)` from
-    the proposed AC6 amendment (§7).
+    the amended R-0012 AC6.
 - [ ] **AC7.**
   - `K` equals `0.5522847498307936` bit-exactly.
   - Circle radial error is ≤ 3e-4·R.
@@ -714,9 +713,10 @@ Each item maps to an R-0012 AC and becomes a QA test.
 | 2026-09-27 | Pinhole: adaptive subdivision into cubics, not flattening to lines | The SVG keeps curves, and the tolerance is checked where it is defined, in image space. De Casteljau halving uses only averages |
 | 2026-09-27 | Chord count from a closed-form bound on `‖B''‖`, not an adaptive search | A bound is a pure function of the control points. Adaptive flatness searches are equally deterministic but harder to state as a guarantee |
 | 2026-09-27 | Architect review: REQUEST CHANGES, all 15 findings applied | Flattening moved to `ppm.rs` on `Px`, removing the `prim` ↔ `path` cycle. The foot point and the strict half-plane tie rule are pinned, because the tie rule is load-bearing (0.984 vs 1.559 px²). Corner bound gains `min(w, h) ≥ 1 px`, exhaustive-grid numbers and a derivation. `δ` 1/64 → 2⁻²⁰. Zero-length edges skipped. Any non-finite edge means no fill. Pinhole wording corrected, with the compound bound stated. Both downstream repos listed. `mul_add` ban scoped and the pre-existing exception recorded. Golden scene and demo pinned. `Fill::solid` added. `stroke="none"` for no-stroke paths |
-| 2026-09-27 | **Proposed R-0012 AC6 amendment (owner approval pending).** The stroked-circle band becomes `R ± (r + 0.5 + 0.1 + 3·10⁻⁴·R)` | The 4-cubic circle deviates only *outward*, by up to 2.725·10⁻⁴·R (0.136 px at R = 500), and chords only sag inward, so nothing absorbs it. As written, AC6 contradicts R-0012's own "0.13 px at R = 500": measured lit extent reaches `r + 0.5 + 0.129`. The alternative, capping the test at R ≤ 333 px, would leave the requirement false for larger circles, so it was rejected |
+| 2026-09-27 | **R-0012 AC6 amendment (owner-approved 2026-09-27).** The stroked-circle band becomes `R ± (r + 0.5 + 0.1 + 3·10⁻⁴·R)` | The 4-cubic circle deviates only *outward*, by up to 2.725·10⁻⁴·R (0.136 px at R = 500), and chords only sag inward, so nothing absorbs it. As written, AC6 contradicts R-0012's own "0.13 px at R = 500": measured lit extent reaches `r + 0.5 + 0.129`. The alternative, capping the test at R ≤ 333 px, would leave the requirement false for larger circles, so it was rejected |
 
 ## Changelog
 
 - 2026-09-27: created (Draft) from the accepted R-0012.
 - 2026-09-27: revised after architect review; all 15 findings applied, and the AC6 amendment proposed to the owner.
+- 2026-09-27: **Accepted** by the owner, with the AC6 amendment approved.

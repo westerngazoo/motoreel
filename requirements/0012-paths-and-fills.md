@@ -147,11 +147,11 @@ has to say what "correct" means under a pinhole camera (AC4, OQ-1).
     deviation between chord and curve is **≤ 0.1 px**. The spec derives
     the chord count per segment from that bound.
   - A stroked circle of radius R px and stroke radius r ≥ 1 px lights only
-    pixels whose centres lie within `R ± (r + 0.5 + 0.1)` px of the true
+    pixels whose centres lie within `R ± (r + 0.5 + 0.1 + 3·10⁻⁴·R)` px of the true
     centre, and lights every pixel within `R ± (r − 0.5)`.
 
-    > **Proposed amendment (2026-09-27, owner approval pending).** Widen the
-    > outer band to `R ± (r + 0.5 + 0.1 + 3·10⁻⁴·R)`. The 4-cubic circle
+    > **Amended (2026-09-27, owner-approved).** The outer band was
+    > `R ± (r + 0.5 + 0.1)` and is now `R ± (r + 0.5 + 0.1 + 3·10⁻⁴·R)`. The 4-cubic circle
     > (AC7) lies up to 2.725·10⁻⁴·R *outside* the true circle, which is
     > 0.136 px at R = 500 px, as §2 of this very requirement states. As
     > written, this criterion cannot hold for R > 333 px. Found by the
@@ -283,8 +283,10 @@ has to say what "correct" means under a pinhole camera (AC4, OQ-1).
 | 2026-09-27 | **OQ-2:** fill coverage is the existing one-pixel ramp on the signed distance to the outline, with the sign from the nonzero winding number at the pixel centre | Closed-form per pixel, so SPEC-0006 §2.7's determinism argument holds unamended, and fill and stroke agree on where the boundary is. Corner error is bounded by AC5 rather than eliminated (owner) |
 | 2026-09-27 | **OQ-3:** `Style` gains `fill: Option<Fill>` | Fill lives in the one style every primitive already carries, so it can be honoured on more variants later without another type change. SPEC-0012 honours it on `Path`. The churn is mechanical: 36 literal sites here (mostly tests) and 5 in guion-video-creator (owner) |
 | 2026-09-27 | **OQ-4:** `Shape::Point` is unchanged; filled dots come from the circle generator | A point stays a point. The generator is trig-free and exact, so the dot costs nothing extra (owner) |
+| 2026-09-27 | **AC6 amended:** the outer circle band gains `+ 3·10⁻⁴·R` | The 4-cubic circle (AC7) bulges up to 2.725·10⁻⁴·R outward and chords only sag inward, so the original band was unreachable above R ≈ 333 px, contradicting §2's own "0.13 px at R = 500". Found by the SPEC-0012 architect review, finding 1; approved by the owner |
 
 ## Changelog
 
 - 2026-09-27: created as a Draft for discussion with the owner.
 - 2026-09-27: **Accepted**. OQ-1 to OQ-4 settled on the recommendations; §5 is kept for the record.
+- 2026-09-27: AC6 amended (owner-approved).

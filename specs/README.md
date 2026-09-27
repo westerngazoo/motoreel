@@ -41,3 +41,4 @@ field. The build order across requirements and specs is in
 | [SPEC-0004](0004-physics-playback.md) | Rollout recording, wireframe edges, tumbling box | R-0004 | Implemented — owner acceptance pending |
 | [SPEC-0006](0006-ppm-sink.md) | `PpmSink`: P6 raster frames + stroke rasterizer | R-0006 | Draft — architect-reviewed, findings applied |
 | [SPEC-0007](0007-anchored-labels.md) | Anchored text labels, both sinks | R-0007 | Draft — architect-reviewed, findings applied |
+| [SPEC-0012](0012-paths-and-fills.md) | Paths and fills: cubic paths, nonzero fills, shape generators | R-0012 | Accepted |

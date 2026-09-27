@@ -57,7 +57,7 @@ M3 glyph work.
 | R-0006 | `PpmSink`: P6 raster frames with a stroke rasterizer — video with **stock ffmpeg**, no librsvg, no external rasterizer | SPEC-0006 | **Met** — QA-signed-off 2026-08-27; encode proven against stock ffmpeg |
 | R-0007 | Anchored text labels: strings pinned to a world point, a body's pose, or a screen corner; rendered by both sinks | SPEC-0007 | **Met** — QA-signed-off 2026-08-27; both sinks, 95-glyph embedded face |
 | R-0008 | *(next)* Declarative scenes: describe a scene as data and render it without writing Rust — the physics-lab manifest pattern, applied to film | — | Backlog |
-| R-0012 | Paths and fills: `MoveTo/LineTo/CubicTo/Close`, nonzero-winding fills with opacity, trig-free circle and other shape generators, both sinks (unblocks physics-lab RFC-002 areas and the friction circle) | SPEC-0012 | Spec'd (in progress) |
+| R-0012 | Paths and fills: `MoveTo/LineTo/CubicTo/Close`, nonzero-winding fills with opacity, trig-free circle and other shape generators, both sinks (unblocks physics-lab RFC-002 areas and the friction circle) | SPEC-0012 | Spec'd: accepted 2026-09-27; QA red tests in progress |
 
 **Why the renumber.** The M3/M4 requirements below shift up by two; the
 GA glyphs and incidence shapes keep their content and lose their old ids.
