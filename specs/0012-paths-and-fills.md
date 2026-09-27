@@ -329,7 +329,8 @@ of the edges, grown by 0.5 px and clamped:
 
 ```
 among edges e with d(c, e) < 0.5 that are boundary at their foot point:
-    take the one with least d; break ties by (d, s) lexicographically, where
+    take the one with least d; break ties by (d, −s) lexicographically
+    (at equal d the inside sign wins; owner decision), where
     s = +d if c lies STRICTLY in e's inside half-plane, else −d
         (c exactly on e's line, which happens beyond an endpoint, gives s = −d)
 if such an edge exists:  cov = unit(0.5 + s)             // the SPEC-0006 ramp
@@ -434,8 +435,13 @@ grid.
   and still passes the convex suite. Neither δ nor the tie-break
   direction is currently pinned by a test.
 
-**Whether to reverse the tie-break is an owner decision.** A test pinning
-whichever direction is chosen follows it (PR #3 review, finding 4).
+**Owner decision (2026-09-27): the tie-break is reversed**, so at equal
+`d` the inside sign `+d` wins. The same grid then measures **1.541 px²**
+at `w = h = 1.5625`, offset `(15/16, 15/16)`. The convex figures above do
+not move (0.984), and no golden byte changes.
+`hole_corner_error_is_bounded_with_the_inside_sign_tie_break` pins it at
+1.6 + n/510: reverting the tie-break fails it at 1.62 on its first
+rectangle.
 
 ### 2.7 Strokes of paths
 
@@ -698,7 +704,9 @@ addition:
   superseded.
 - **`polygon(pts: &[Pt2])`.** Consecutive duplicate vertices, including
   the last equalling the first, are dropped, per the no-zero-length-sides
-  rule. Fewer than 3 distinct vertices remaining gives an empty `Vec`.
+  rule. Fewer than 3 vertices remaining gives an empty `Vec`. The count
+  is of vertices remaining, not distinct ones (owner decision,
+  2026-09-27), so `[a, b, a, b]` is the zero-area 4-gon.
 - **An infinite `r`, `rad`, `w`, `h` or `sweep`** counts as non-finite and
   returns an empty `Vec`. The `|sweep| > τ` clamp applies to finite values
   only.
@@ -803,6 +811,7 @@ Each item maps to an R-0012 AC and becomes a QA test.
 | 2026-09-27 | Chord count from a closed-form bound on `‖B''‖`, not an adaptive search | A bound is a pure function of the control points. Adaptive flatness searches are equally deterministic but harder to state as a guarantee |
 | 2026-09-27 | Architect review: REQUEST CHANGES, all 15 findings applied | Flattening moved to `ppm.rs` on `Px`, removing the `prim` ↔ `path` cycle. The foot point and the strict half-plane tie rule are pinned, because the tie rule is load-bearing (0.984 vs 1.559 px²). Corner bound gains `min(w, h) ≥ 1 px`, exhaustive-grid numbers and a derivation. `δ` 1/64 → 2⁻²⁰. Zero-length edges skipped. Any non-finite edge means no fill. Pinhole wording corrected, with the compound bound stated. Both downstream repos listed. `mul_add` ban scoped and the pre-existing exception recorded. Golden scene and demo pinned. `Fill::solid` added. `stroke="none"` for no-stroke paths |
 | 2026-09-27 | **R-0012 AC6 amendment (owner-approved 2026-09-27).** The stroked-circle band becomes `R ± (r + 0.5 + 0.1 + 3·10⁻⁴·R)` | The 4-cubic circle deviates only *outward*, by up to 2.725·10⁻⁴·R (0.136 px at R = 500), and chords only sag inward, so nothing absorbs it. As written, AC6 contradicts R-0012's own "0.13 px at R = 500": measured lit extent reaches `r + 0.5 + 0.129`. The alternative, capping the test at R ≤ 333 px, would leave the requirement false for larger circles, so it was rejected |
+| 2026-09-27 | **Owner decisions after PR #3 review.** (1) The fill's `(d, s)` tie-break is reversed: at equal distance the inside sign wins. (2) `polygon` counts vertices remaining, not distinct | (1) Hole corners, which AC5 does not bound, drop from 2.24 to 1.541 px²; convex corners and every golden are unchanged; a test pins the direction. (2) `[a, b, a, b]` has no zero-length side, so the zero-area 4-gon is kept and the wording follows the implementation |
 
 ## Changelog
 
@@ -811,3 +820,4 @@ Each item maps to an R-0012 AC and becomes a QA test.
 - 2026-09-27: **Accepted** by the owner, with the AC6 amendment approved.
 - 2026-09-27: QA step-3 findings resolved by the owner. AC10 amended; generator orientation settled (§2.9); §2.6 vertex wording corrected; clarifications recorded in §2.13; CI steps added (§2.11).
 - 2026-09-27: PR #3 architect review (APPROVE, conditional on the companion PRs) recorded: `Copy` on `Seg`, cull-then-drop order, the +∞ alpha asymmetry, hole-corner error with the tie-break decision left to the owner, companion PRs and the §2.11 correction.
+- 2026-09-27: owner decisions: the `(d, s)` tie-break is reversed (inside sign wins; hole corners 2.24 → 1.541 px², pinned by a test), and `polygon` counts vertices remaining, not distinct (`[a, b, a, b]` is the zero-area 4-gon).

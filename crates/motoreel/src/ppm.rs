@@ -732,11 +732,12 @@ fn spans(a: Px, b: Px, y: f64) -> bool {
 }
 
 /// Whether signed distance `s` beats `best` in SPEC-0012 §2.6's order:
-/// `(d, s)` lexicographically with `d = |s|`, so the nearer edge wins, and
-/// at equal distance the outside sign. The order, not the visiting order,
+/// `(d, −s)` lexicographically with `d = |s|`, so the nearer edge wins, and
+/// at equal distance the inside sign (owner decision; it bounds hole
+/// corners at 1.54 px² instead of 2.24). The order, not the visiting order,
 /// picks the winner.
 fn nearer(s: f64, best: f64) -> bool {
-    s.abs() < best.abs() || (s.abs() == best.abs() && s < best)
+    s.abs() < best.abs() || (s.abs() == best.abs() && s > best)
 }
 
 /// Distance in pixels from `p` to segment `a`–`b`. A degenerate segment

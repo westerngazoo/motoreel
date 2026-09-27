@@ -2365,6 +2365,80 @@ mod ac5 {
         eprintln!("AC5 random corners: worst |Σcov − area| − n/510 = {worst}");
     }
 
+    // §2.6 (owner decision, 2026-09-27) — at equal distance the `(d, s)`
+    // tie-break prefers the inside sign `+d`. AC5 bounds convex corners
+    // only; this pins the hole-corner behaviour the decision was about. A
+    // square hole (reversed orientation) is cut from a pixel-aligned cell,
+    // which is exact on its own, so all the error comes from the four hole
+    // corners. Grid: every sixteenth-pixel offset, w and h in [1, 3] px in
+    // 1/16 steps. Preferring `−d` measured 2.24 px² at w = 1, h = 1.625,
+    // offset (8, 15)/16; preferring `+d` measures WORST_HOLE below. The
+    // bound sits between the two, so flipping the tie-break back fails.
+    #[test]
+    fn hole_corner_error_is_bounded_with_the_inside_sign_tie_break() {
+        const CELL: u32 = 8;
+        const BOUND: f64 = 1.6;
+        let size = (256 * CELL, 33 * CELL);
+        let view = (f64::from(size.0) / 16.0, f64::from(size.1) / 16.0);
+        let mut worst = (0.0_f64, 0.0, 0.0, 0);
+        for a in 16..=48u32 {
+            let w = f64::from(a) / 16.0;
+            let mut prims = Vec::new();
+            let mut holes = Vec::new();
+            for (row, b) in (16..=48u32).enumerate() {
+                let h = f64::from(b) / 16.0;
+                for o in 0..256u32 {
+                    let (cx0, cy0) = (f64::from(o * CELL), row as f64 * f64::from(CELL));
+                    let (cx1, cy1) = (cx0 + f64::from(CELL), cy0 + f64::from(CELL));
+                    let (ox, oy) = (f64::from(o % 16) / 16.0, f64::from(o / 16) / 16.0);
+                    let (x0, y0) = (cx0 + 2.0 + ox, cy0 + 2.0 + oy);
+                    let (x1, y1) = (x0 + w, y0 + h);
+                    prims.push(path_prim(
+                        vec![
+                            px_rect(size, 16.0, (cx0, cy0), (cx1, cy1)),
+                            px_rect(size, 16.0, (x0, y0), (x1, y1)).reversed(),
+                        ],
+                        filled(WHITE, 1.0),
+                    ));
+                    holes.push((o, row as u32, x0, y0, x1, y1));
+                }
+            }
+            let f = render_ppm(&format!("r0012_ac5_holes_{a}"), size, view, &prims);
+            for (o, row, x0, y0, x1, y1) in holes {
+                let (mut sum, mut n) = (0.0, 0);
+                for y in row * CELL..(row + 1) * CELL {
+                    for x in o * CELL..(o + 1) * CELL {
+                        sum += f64::from(f.grey(x, y)) / 255.0;
+                        if in_fringe((x0, y0, x1, y1), x, y) {
+                            n += 1;
+                        }
+                    }
+                }
+                let area = f64::from(CELL * CELL) - (x1 - x0) * (y1 - y0);
+                let err = (sum - area).abs();
+                if err - f64::from(n) / 510.0 > worst.0 {
+                    worst = (err - f64::from(n) / 510.0, x1 - x0, y1 - y0, o);
+                }
+                assert!(
+                    err <= BOUND + f64::from(n) / 510.0,
+                    "hole w = {} px, h = {} px at offset ({}, {})/16: \
+                     |Σcov − area| = {err}, over {BOUND} + {n}/510",
+                    x1 - x0,
+                    y1 - y0,
+                    o % 16,
+                    o / 16
+                );
+            }
+        }
+        let (e, w, h, o) = worst;
+        eprintln!(
+            "AC5 hole grid: worst |Σcov − area| − n/510 = {e} at w = {w}, h = {h}, \
+             offset ({}, {})/16",
+            o % 16,
+            o / 16
+        );
+    }
+
     // AC5 / §2.6 — the strict half-plane tie rule is load-bearing. A pixel
     // centre that lies exactly on an edge's line, 0.25 px beyond the edge's
     // end, is outside the rectangle. The strict rule gives it s = −d, so its
@@ -3110,10 +3184,10 @@ mod ac7 {
         );
     }
 
-    // AC7 / §2.13 — fewer than 3 distinct vertices left after dropping
+    // AC7 / §2.13 — fewer than 3 vertices remaining after dropping
     // consecutive duplicates gives an empty `Vec`.
     #[test]
-    fn a_polygon_with_fewer_than_three_distinct_vertices_is_empty() {
+    fn a_polygon_with_fewer_than_three_remaining_vertices_is_empty() {
         let (a, b, c) = (p(0.0, 0.0), p(1.0, 0.0), p(1.0, 1.0));
         for (name, pts) in [
             ("one vertex, repeated", vec![a, a, a]),
@@ -3129,6 +3203,19 @@ mod ac7 {
             polygon(&[a, a, b, c, c, a]).len(),
             1,
             "three distinct is enough"
+        );
+    }
+
+    // AC7 / §2.13 (owner decision, 2026-09-27) — the count is of vertices
+    // *remaining*, not distinct ones. `[a, b, a, b]` has no consecutive
+    // duplicate, so all four remain and it is the zero-area 4-gon, with no
+    // zero-length side.
+    #[test]
+    fn a_polygon_counts_remaining_vertices_not_distinct_ones() {
+        let (a, b) = (p(0.0, 0.0), p(1.0, 0.0));
+        assert_eq!(
+            polygon(&[a, b, a, b]),
+            vec![Subpath::new(a).line_to(b).line_to(a).line_to(b).close()],
         );
     }
 
