@@ -2807,11 +2807,25 @@ mod ac7 {
         }
     }
 
-    // AC7 — arc end points are exact: they lie on the circle at the start
-    // and end angles, up to the rounding of `cos`/`sin`. The interior stays
-    // within 3·10⁻⁴·r of the circle and turns the way the sweep's sign says.
+    /// The arc's angular interval as SPEC-0012 §2.9 normalises it: always
+    /// traversed counter-clockwise, so a negative sweep runs from
+    /// `start + sweep` up to `start` (owner decision, 2026-09-27).
+    fn ccw_interval(start: f64, sweep: f64) -> (f64, f64) {
+        if sweep > 0.0 {
+            (start, start + sweep)
+        } else {
+            (start + sweep, start)
+        }
+    }
+
+    // AC7 / §2.9 — arc end points are exact: they lie on the circle at the
+    // ends of the counter-clockwise interval, up to the rounding of
+    // `cos`/`sin`. For a negative sweep that interval runs from
+    // `start + sweep` to `start`. The interior stays within 3·10⁻⁴·r of the
+    // circle, and piece i's midpoint sits at `from + |sweep|·(i + ½)/m`:
+    // counter-clockwise, whatever the sweep's sign.
     #[test]
-    fn arc_endpoints_lie_on_the_circle_and_the_arc_turns_the_right_way() {
+    fn arc_endpoints_lie_on_the_circle_and_the_arc_runs_counter_clockwise() {
         let angle = |q: Pt2, c: Pt2| (q.y - c.y).atan2(q.x - c.x);
         let same_angle =
             |a: f64, b: f64| ((a - b).rem_euclid(TAU)).min((b - a).rem_euclid(TAU)) < 1e-9;
@@ -2819,22 +2833,25 @@ mod ac7 {
             (p(0.25, -0.5), 1.5, 0.4, 2.0),
             (p(-3.0, 2.0), 0.75, -1.0, -4.5),
             (p(0.0, 0.0), 10.0, 3.0, TAU),
+            (p(0.0, 0.0), 10.0, 3.0, -TAU),
             (p(1.0, 1.0), 2.0, 0.0, 0.3),
+            (p(1.0, 1.0), 2.0, 0.0, -0.3),
         ] {
             let s = &arc(c, r, start, sweep)[0];
+            let (from, to) = ccw_interval(start, sweep);
             let tol = 1e-12 * (r + c.x.abs() + c.y.abs());
-            let want_start = p(c.x + r * start.cos(), c.y + r * start.sin());
-            let want_end = p(
-                c.x + r * (start + sweep).cos(),
-                c.y + r * (start + sweep).sin(),
-            );
+            let want_start = p(c.x + r * from.cos(), c.y + r * from.sin());
+            let want_end = p(c.x + r * to.cos(), c.y + r * to.sin());
             let end = *on_curve(s).last().expect("an end point");
             assert!(
                 close_to(s.start, want_start, tol),
-                "start {:?} vs {want_start:?}",
+                "sweep {sweep}: start {:?} vs {want_start:?}",
                 s.start
             );
-            assert!(close_to(end, want_end, tol), "end {end:?} vs {want_end:?}");
+            assert!(
+                close_to(end, want_end, tol),
+                "sweep {sweep}: end {end:?} vs {want_end:?}"
+            );
 
             let quarters = cubic_segments(s);
             let m = quarters.len() as f64;
@@ -2844,12 +2861,53 @@ mod ac7 {
                     assert!(e.abs() <= 3e-4 * r, "piece {i}: radial error {e}");
                 }
                 let mid = angle(cubic_at(*q, 0.5), c);
-                let want = start + sweep * (i as f64 + 0.5) / m;
+                let want = from + sweep.abs() * (i as f64 + 0.5) / m;
                 assert!(
                     same_angle(mid, want),
                     "piece {i} of sweep {sweep}: midpoint at angle {mid}, want {want}"
                 );
             }
+            assert!(
+                signed_area(&arc(c, r, start, sweep)) > 0.0,
+                "sweep {sweep}: arc and chord enclose a positive (CCW) area"
+            );
+        }
+    }
+
+    // AC7 / §2.9 — "a negative sweep describes the same region": the arc
+    // for (start, −s) is the arc for (start − s, +s), with the same pieces.
+    // Its end may differ by the rounding of `start − s + s`, so points are
+    // compared within 10⁻¹² relative, not bit for bit. The sector follows,
+    // with the same positive area.
+    #[test]
+    fn a_negative_sweep_is_the_same_region_traversed_counter_clockwise() {
+        for (c, r, start, s) in [
+            (p(0.25, -0.5), 1.5, 0.4, 2.0),
+            (p(-3.0, 2.0), 0.75, -1.0, 4.5),
+            (p(1.0, 1.0), 2.0, 0.0, 0.3),
+            (p(0.0, 0.0), 1.0, 1.0, TAU),
+        ] {
+            let tol = 1e-12 * (r + c.x.abs() + c.y.abs());
+            for (neg, pos) in [
+                (arc(c, r, start, -s), arc(c, r, start - s, s)),
+                (sector(c, r, start, -s), sector(c, r, start - s, s)),
+            ] {
+                assert_eq!(neg.len(), 1);
+                assert_eq!(neg[0].segs.len(), pos[0].segs.len(), "same pieces");
+                assert_eq!(neg[0].closed, pos[0].closed);
+                for (a, b) in sample(&neg[0], 0).iter().zip(sample(&pos[0], 0)) {
+                    assert!(close_to(*a, b, tol), "sweep −{s}: {a:?} vs {b:?}");
+                }
+            }
+            let (neg, pos) = (
+                signed_area(&sector(c, r, start, -s)),
+                signed_area(&sector(c, r, start - s, s)),
+            );
+            assert!(neg > 0.0, "a negative-sweep sector is counter-clockwise");
+            assert!(
+                (neg - pos).abs() <= 1e-9 * pos,
+                "same region: {neg} vs {pos}"
+            );
         }
     }
 
@@ -2987,10 +3045,80 @@ mod ac7 {
         );
     }
 
-    // AC7 / §2.9 — generators are counter-clockwise in y-up coordinates
-    // (positive signed area), stated once and tested here. For `sector`
-    // that holds for a positive sweep, and for `polygon` for
-    // counter-clockwise input; see the test plan for the other cases.
+    // AC7 / §2.9 (owner decision, 2026-09-27) — `polygon` keeps the
+    // caller's vertex order, so clockwise input stays clockwise. That is how
+    // a hole is authored directly. The same vertices counter-clockwise give
+    // the opposite area.
+    #[test]
+    fn a_polygon_keeps_a_clockwise_input_clockwise() {
+        let [a, b, c, d] = square(0.25, -0.5, 0.75);
+        let cw = polygon(&[a, d, c, b]);
+        assert_eq!(
+            cw,
+            vec![Subpath::new(a).line_to(d).line_to(c).line_to(b).close()],
+            "the caller's order, verbatim"
+        );
+        let (cw_area, ccw_area) = (signed_area(&cw), signed_area(&polygon(&[a, b, c, d])));
+        assert!(cw_area < 0.0, "clockwise input stays clockwise: {cw_area}");
+        assert_eq!(cw_area, -ccw_area, "the same region, opposite orientation");
+    }
+
+    // AC7 / §2.13 — consecutive duplicate vertices are dropped, the last
+    // equalling the first included, per the no-zero-length-sides rule. The
+    // result is exactly the de-duplicated polygon.
+    #[test]
+    fn a_polygon_drops_consecutive_duplicates_including_last_equal_to_first() {
+        let [a, b, c, d] = square(0.25, -0.5, 0.75);
+        let want = polygon(&[a, b, c, d]);
+        for (name, pts) in [
+            ("a repeated first vertex", vec![a, a, b, c, d]),
+            ("a repeated middle vertex", vec![a, b, b, b, c, d]),
+            ("a repeated last vertex", vec![a, b, c, d, d]),
+            ("last equals first", vec![a, b, c, d, a]),
+            ("last equals first, repeated", vec![a, b, c, d, a, a]),
+            (
+                "everything doubled and closed",
+                vec![a, a, b, b, c, c, d, d, a],
+            ),
+        ] {
+            let got = polygon(&pts);
+            assert_eq!(got, want, "{name}");
+            assert!(no_zero_length_segment(&got[0]), "{name}");
+        }
+        assert_eq!(
+            polygon(&[a, b, a, c]),
+            vec![Subpath::new(a).line_to(b).line_to(a).line_to(c).close()],
+            "a non-consecutive repeat is not a zero-length side and stays"
+        );
+    }
+
+    // AC7 / §2.13 — fewer than 3 distinct vertices left after dropping
+    // consecutive duplicates gives an empty `Vec`.
+    #[test]
+    fn a_polygon_with_fewer_than_three_distinct_vertices_is_empty() {
+        let (a, b, c) = (p(0.0, 0.0), p(1.0, 0.0), p(1.0, 1.0));
+        for (name, pts) in [
+            ("one vertex, repeated", vec![a, a, a]),
+            ("two vertices, one repeated", vec![a, a, b]),
+            ("two vertices, both repeated", vec![a, a, b, b]),
+            ("there and back", vec![a, b, a]),
+            ("there and back, repeated", vec![a, b, b, a, a]),
+        ] {
+            let got = polygon(&pts);
+            assert!(got.is_empty(), "{name}: got {got:?}");
+        }
+        assert_eq!(
+            polygon(&[a, a, b, c, c, a]).len(),
+            1,
+            "three distinct is enough"
+        );
+    }
+
+    // AC7 / §2.9 (owner decision, 2026-09-27) — `circle`, `arc`, `sector`
+    // and `rounded_rect` are always counter-clockwise in y-up coordinates
+    // (positive signed area; an open arc is closed by its chord), for either
+    // sign of `sweep`. `polygon` keeps the caller's order, so only
+    // counter-clockwise input is here; clockwise input has its own test.
     #[test]
     fn generators_are_counter_clockwise() {
         let c = p(0.3, -0.2);
@@ -2999,9 +3127,21 @@ mod ac7 {
             ("rounded_rect rad 0", rounded_rect(c, 2.0, 1.0, 0.0)),
             ("rounded_rect rad 0.3", rounded_rect(c, 2.0, 1.0, 0.3)),
             ("rounded_rect rad max", rounded_rect(c, 2.0, 1.0, 0.5)),
+            ("arc", arc(c, 1.0, 0.3, 2.0)),
+            ("arc, negative sweep", arc(c, 1.0, 0.3, -2.0)),
+            ("arc, negative full turn", arc(c, 1.0, 0.3, -TAU)),
             ("sector", sector(c, 1.0, 0.3, 2.0)),
+            ("sector, negative sweep", sector(c, 1.0, 0.3, -2.0)),
+            (
+                "sector, negative sweep past a half turn",
+                sector(c, 1.0, 0.3, -4.5),
+            ),
             ("sector full turn", sector(c, 1.0, 0.3, TAU)),
-            ("polygon", polygon(&square(0.0, 0.0, 1.0))),
+            ("sector, negative full turn", sector(c, 1.0, 0.3, -TAU)),
+            (
+                "polygon, counter-clockwise input",
+                polygon(&square(0.0, 0.0, 1.0)),
+            ),
         ];
         for (name, out) in cases {
             assert!(signed_area(&out) > 0.0, "{name} must be counter-clockwise");
@@ -3088,6 +3228,39 @@ mod ac7 {
             1,
             "a tiny positive radius is still a circle"
         );
+    }
+
+    // AC7 / §2.13 — an infinite `r`, `rad`, `w`, `h` or `sweep` counts as
+    // non-finite and returns an empty `Vec`, for every generator and both
+    // signs. The `|sweep| > τ` clamp and the `rad` clamp apply to finite
+    // values only. Infinite coordinates and angles do the same.
+    #[test]
+    fn infinite_inputs_return_an_empty_path_for_every_generator() {
+        let c = p(0.3, -0.2);
+        for inf in [f64::INFINITY, f64::NEG_INFINITY] {
+            let cases: Vec<(&str, Vec<Subpath<Pt2>>)> = vec![
+                ("circle r", circle(c, inf)),
+                ("circle c.x", circle(p(inf, 0.0), 1.0)),
+                ("circle c.y", circle(p(0.0, inf), 1.0)),
+                ("arc r", arc(c, inf, 0.3, 1.0)),
+                ("arc sweep", arc(c, 1.0, 0.3, inf)),
+                ("arc start", arc(c, 1.0, inf, 1.0)),
+                ("arc c", arc(p(inf, 0.0), 1.0, 0.3, 1.0)),
+                ("sector r", sector(c, inf, 0.3, 1.0)),
+                ("sector sweep", sector(c, 1.0, 0.3, inf)),
+                ("sector start", sector(c, 1.0, inf, 1.0)),
+                ("sector c", sector(p(0.0, inf), 1.0, 0.3, 1.0)),
+                ("rounded_rect w", rounded_rect(c, inf, 1.0, 0.1)),
+                ("rounded_rect h", rounded_rect(c, 1.0, inf, 0.1)),
+                ("rounded_rect rad", rounded_rect(c, 1.0, 1.0, inf)),
+                ("rounded_rect c", rounded_rect(p(inf, 0.0), 1.0, 1.0, 0.1)),
+                ("polygon vertex x", polygon(&[c, p(1.0, 0.0), p(inf, 1.0)])),
+                ("polygon vertex y", polygon(&[c, p(1.0, inf), p(0.0, 1.0)])),
+            ];
+            for (name, out) in cases {
+                assert!(out.is_empty(), "{name} = {inf} must be empty, got {out:?}");
+            }
+        }
     }
 }
 
@@ -3198,6 +3371,55 @@ mod ac8 {
             only_path_line("r0012_ac8_neither", paint(STEEL, 0.0, 1.0, None)),
             format!("<path d=\"{D}\" fill=\"none\" stroke=\"none\"/>")
         );
+    }
+
+    // AC8 / AC2 / §2.13 — a non-finite fill alpha (NaN, +∞, −∞) paints
+    // nothing in either sink. The SVG writes `fill="none"`, never
+    // `fill-opacity="NaN"` or `"inf"`, so its bytes equal the stroke-only
+    // element exactly. The PPM frame equals the stroke-only frame byte for
+    // byte. +∞ is the case to watch: §2.2's `unit` alone would read it as
+    // opaque, and §2.13 overrides that.
+    #[test]
+    fn a_non_finite_fill_alpha_writes_fill_none_and_paints_nothing() {
+        let stroke_only = stroked(STEEL, 0.125, 0.7);
+        let svg_ref = only_path_line("r0012_ac8_nonfinite_ref", stroke_only);
+        let ppm_ref = render_ppm(
+            "r0012_ac8_nonfinite_ppm_ref",
+            GRID,
+            GRID_VIEW,
+            &[path_prim(fixture(), stroke_only)],
+        );
+        for (i, alpha) in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY]
+            .into_iter()
+            .enumerate()
+        {
+            let style = paint(STEEL, 0.125, 0.7, solid(GOLD, alpha));
+            assert_eq!(
+                only_path_line(&format!("r0012_ac8_nonfinite_svg_{i}"), style),
+                svg_ref,
+                "fill alpha {alpha}: SVG must write fill=\"none\""
+            );
+            let f = render_ppm(
+                &format!("r0012_ac8_nonfinite_ppm_{i}"),
+                GRID,
+                GRID_VIEW,
+                &[path_prim(fixture(), style)],
+            );
+            assert!(
+                f.pixels == ppm_ref.pixels,
+                "fill alpha {alpha}: PPM must paint only the stroke"
+            );
+            let fill_only = render_ppm(
+                &format!("r0012_ac8_nonfinite_fill_only_{i}"),
+                GRID,
+                GRID_VIEW,
+                &[path_prim(fixture(), filled(GOLD, alpha))],
+            );
+            assert!(
+                fill_only.is_pure([0, 0, 0]),
+                "fill alpha {alpha}, no stroke: nothing painted"
+            );
+        }
     }
 
     // AC8 — numbers use SPEC-0003's rule, Rust's `{}` for f64 (shortest
