@@ -426,6 +426,9 @@ impl Canvas {
     /// outside. Coverage is therefore a closed form of each pixel centre
     /// and the edge set, and it agrees with the stroke on where the
     /// boundary is. Composited once per pixel, row-major.
+    ///
+    /// This builds the edge set; the band pass is [`nearest_boundary`],
+    /// and the interior pass with the composite is [`composite_fill`].
     fn draw_fill(&mut self, subpaths: &[Subpath<Pt2>], fill: Fill) {
         // A non-finite alpha paints nothing, +∞ included (SPEC-0012
         // §2.13), which `unit` alone would read as opaque. The SVG sink
@@ -454,55 +457,16 @@ impl Canvas {
         let Some(tile) = Tile::around(edges, 0.5, dims) else {
             return;
         };
-
-        // Band pass: each slot keeps the signed distance of the nearest
-        // boundary edge within 0.5 px, and +∞ where there is none. Only an
-        // edge's own band is visited, as `draw_stroke` does.
-        nearest.clear();
-        nearest.resize(tile.area(), f64::INFINITY);
-        for &(a, b) in edges.iter() {
-            let Some(band) = tile.intersect(Tile::around(&[(a, b)], 0.5, dims)) else {
-                continue;
-            };
-            for y in band.y0..band.y1 {
-                for x in band.x0..band.x1 {
-                    let centre = (f64::from(x) + 0.5, f64::from(y) + 0.5);
-                    let Some(s) = signed_distance(edges, a, b, centre) else {
-                        continue;
-                    };
-                    let slot = &mut nearest[tile.offset(x, y)];
-                    if nearer(s, *slot) {
-                        *slot = s;
-                    }
-                }
-            }
-        }
-
-        // Interior pass. The inside test sees only the edges whose
-        // half-open y-range holds this row's centre line: no other edge
-        // can cross the row, so the winding number is the full sum. The
-        // list is a filter with exact set equality, not a scanline walk —
-        // nothing is carried along the row (SPEC-0006 §2.7, point 3).
-        let mut row = Vec::new();
-        for y in tile.y0..tile.y1 {
-            let cy = f64::from(y) + 0.5;
-            row.clear();
-            row.extend(edges.iter().copied().filter(|&(a, b)| spans(a, b, cy)));
-            for x in tile.x0..tile.x1 {
-                let s = nearest[tile.offset(x, y)];
-                let cov = if s.is_finite() {
-                    unit(0.5 + s)
-                } else if inside(&row, (f64::from(x) + 0.5, cy)) {
-                    1.0
-                } else {
-                    0.0
-                };
-                if cov > 0.0 {
-                    let i = (y as usize * dims.0 as usize + x as usize) * 3;
-                    src_over(&mut self.pixels[i..i + 3], fill.colour, cov * alpha);
-                }
-            }
-        }
+        nearest_boundary(edges, tile, dims, nearest);
+        composite_fill(
+            edges,
+            nearest,
+            tile,
+            fill.colour,
+            alpha,
+            &mut self.pixels,
+            dims,
+        );
     }
 
     fn pixels(&self) -> &[u8] {
@@ -614,6 +578,75 @@ fn on_cubic(q: [Px; 4], t: f64) -> Px {
         w[0] * q[0].0 + w[1] * q[1].0 + w[2] * q[2].0 + w[3] * q[3].0,
         w[0] * q[0].1 + w[1] * q[1].1 + w[2] * q[2].1 + w[3] * q[3].1,
     )
+}
+
+/// The band pass of a fill (SPEC-0012 §2.6): refill `nearest` over `tile`
+/// with the signed distance of the nearest boundary edge within 0.5 px of
+/// each pixel centre, and +∞ where there is none.
+///
+/// Each edge visits only its own band — its box grown by 0.5 px — as
+/// `draw_stroke` does. The winner is [`nearer`]'s order, not the visiting
+/// order, so each slot is a closed form of its centre and the edge set.
+fn nearest_boundary(edges: &[(Px, Px)], tile: Tile, dims: (u32, u32), nearest: &mut Vec<f64>) {
+    nearest.clear();
+    nearest.resize(tile.area(), f64::INFINITY);
+    for &(a, b) in edges {
+        let Some(band) = tile.intersect(Tile::around(&[(a, b)], 0.5, dims)) else {
+            continue;
+        };
+        for y in band.y0..band.y1 {
+            for x in band.x0..band.x1 {
+                let centre = (f64::from(x) + 0.5, f64::from(y) + 0.5);
+                let Some(s) = signed_distance(edges, a, b, centre) else {
+                    continue;
+                };
+                let slot = &mut nearest[tile.offset(x, y)];
+                if nearer(s, *slot) {
+                    *slot = s;
+                }
+            }
+        }
+    }
+}
+
+/// The interior pass of a fill and its one composite per pixel, row-major
+/// (SPEC-0012 §2.6): a finite `nearest` distance `s` takes the ramp
+/// `unit(0.5 + s)`; every other pixel is 1 inside and 0 outside.
+///
+/// The inside test sees only the edges whose half-open y-range holds the
+/// row's centre line: no other edge can cross the row, so the winding
+/// number is the full sum. The list is a filter with exact set equality,
+/// not a scanline walk — nothing is carried along the row (SPEC-0006
+/// §2.7, point 3).
+fn composite_fill(
+    edges: &[(Px, Px)],
+    nearest: &[f64],
+    tile: Tile,
+    colour: Rgb,
+    alpha: f64,
+    pixels: &mut [u8],
+    dims: (u32, u32),
+) {
+    let mut row = Vec::new();
+    for y in tile.y0..tile.y1 {
+        let cy = f64::from(y) + 0.5;
+        row.clear();
+        row.extend(edges.iter().copied().filter(|&(a, b)| spans(a, b, cy)));
+        for x in tile.x0..tile.x1 {
+            let s = nearest[tile.offset(x, y)];
+            let cov = if s.is_finite() {
+                unit(0.5 + s)
+            } else if inside(&row, (f64::from(x) + 0.5, cy)) {
+                1.0
+            } else {
+                0.0
+            };
+            if cov > 0.0 {
+                let i = (y as usize * dims.0 as usize + x as usize) * 3;
+                src_over(&mut pixels[i..i + 3], colour, cov * alpha);
+            }
+        }
+    }
 }
 
 /// How far either side of an edge the boundary test probes: δ = 2⁻²⁰ px
