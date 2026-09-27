@@ -9,7 +9,7 @@
 - **Amends:** R-0006 §4, which lists "no fills" as a non-goal. The
   amendment is additive: every existing primitive, coverage rule and golden
   byte stays as it is.
-- **Realized by:** SPEC-0012 (to be written)
+- **Realized by:** [SPEC-0012](../specs/0012-paths-and-fills.md); PR #3 (QA sign-off: PASS)
 - **QA:** `qa` agent run scoped to this requirement
 
 ## 1. Statement

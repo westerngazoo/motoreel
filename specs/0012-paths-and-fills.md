@@ -432,8 +432,8 @@ grid.
   it lies inside the fill but takes `s = −d` under the lexicographic
   `(d, s)` tie-break.
 - Reversing that tie-break (prefer `+d`) lowers the worst case to 1.55
-  and still passes the convex suite. Neither δ nor the tie-break
-  direction is currently pinned by a test.
+  and still passes the convex suite. δ is not pinned by a test; the
+  tie-break direction is (see below).
 
 **Owner decision (2026-09-27): the tie-break is reversed**, so at equal
 `d` the inside sign `+d` wins. The same grid then measures **1.541 px²**

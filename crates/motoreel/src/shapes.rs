@@ -4,7 +4,7 @@
 //! Each returns `Vec<Subpath<Pt2>>` in planar model coordinates, ready for
 //! [`crate::Object::planar`] — and an empty `Vec` for degenerate input
 //! rather than a panic: a non-finite argument, a radius, width or height
-//! `≤ 0`, a zero sweep, or fewer than three distinct polygon vertices.
+//! `≤ 0`, a zero sweep, or fewer than three polygon vertices remaining.
 //!
 //! **Orientation** (owner decision, 2026-09-27): [`circle`], [`arc`],
 //! [`sector`] and [`rounded_rect`] are always counter-clockwise in y-up
