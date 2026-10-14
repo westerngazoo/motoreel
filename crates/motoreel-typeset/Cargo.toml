@@ -11,3 +11,11 @@ repository.workspace = true
 # `motoreel` itself must keep a garust-only graph (R-0009 AC7). See
 # R-0009 OQ-2 for why `ab_glyph` over hand-rolling a scanline fill.
 ab_glyph = "0.2"
+
+# The red tests of requirements whose code outline still waits for the owner
+# (CLAUDE.md §4, steps 3–4). Empty on purpose: `cargo test --features r0014`
+# fails to compile until R-0014's `outline` module exists; the default build
+# and the merge gate stay green.
+[features]
+r0014 = []
+r0015 = ["r0014"]

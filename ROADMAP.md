@@ -58,6 +58,8 @@ M3 glyph work.
 | R-0007 | Anchored text labels: strings pinned to a world point, a body's pose, or a screen corner; rendered by both sinks | SPEC-0007 | **Met** — QA-signed-off 2026-08-27; both sinks, 95-glyph embedded face |
 | R-0008 | *(next)* Declarative scenes: describe a scene as data and render it without writing Rust — the physics-lab manifest pattern, applied to film | — | Backlog |
 | R-0012 | Paths and fills: `MoveTo/LineTo/CubicTo/Close`, nonzero-winding fills with opacity, trig-free circle and other shape generators, both sinks (unblocks physics-lab RFC-002 areas and the friction circle) | SPEC-0012 | **In review**: implemented, 90/90 acceptance tests green, PR open |
+| R-0014 | Glyph outlines: a line of text as closed cubic contours with `measure`'s advances, tracking, exact under affine maps, fillable as an R-0012 nonzero path (R-0013's option B). From the rotorf-sico studio's `Letras` | SPEC-0014 | **Discussing**: red tests in (feature `r0014`); code outline awaiting the owner. R-0013 is on its own branch |
+| R-0015 | Inline formulas as written («(e₁e₂)² = −1», «√−1»): real scripts, the minus as wide as the plus, the radical with its bar, italics by the caller's notation rule. From the rotorf-sico studio's `formula.rs` | SPEC-0015 | **Discussing**: red tests in (feature `r0015`); depends on R-0014 |
 
 **Why the renumber.** The M3/M4 requirements below shift up by two; the
 GA glyphs and incidence shapes keep their content and lose their old ids.
