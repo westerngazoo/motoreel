@@ -10,8 +10,9 @@ use std::fmt::Write as _;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use crate::gradient::{Gradient, GradientKind};
 use crate::path::{Seg, Subpath};
-use crate::prim::{Align, Fill, Prim2, Pt2, Rgb, Style};
+use crate::prim::{Align, Fill, Paint, Prim2, Pt2, Rgb, Style};
 use crate::sink::FrameSink;
 
 /// Writes one `frame_%05d.svg` per frame into a directory (RFC-012 §3.3).
@@ -25,6 +26,9 @@ pub struct SvgSink {
     view: (f64, f64),
     /// CSS family name per face index. See [`SvgSink::with_families`].
     families: Vec<String>,
+    /// Gradient elements written so far in the frame in flight: the next
+    /// id's number (SPEC-0016 §2.8).
+    gradients: usize,
 }
 
 impl SvgSink {
@@ -81,6 +85,7 @@ impl SvgSink {
             buf: String::new(),
             view,
             families: Vec::new(),
+            gradients: 0,
         })
     }
 
@@ -223,12 +228,26 @@ impl SvgSink {
 
     /// One `<path>` element (SPEC-0012 §2.8): absolute `M`/`L`/`C`/`Z` in
     /// image coordinates — the document group flips y — then the fill,
-    /// then the stroke.
+    /// then the stroke. A gradient fill writes its element first
+    /// (SPEC-0016 §2.8) and the path refers to it.
     ///
     /// A paint that paints nothing says `none`, and its other attributes
     /// are omitted. The tests ([`fill_paints`], [`stroke_paints`]) are
     /// `PpmSink`'s own, so the two sinks agree on which paints exist.
     fn write_path(&mut self, subpaths: &[Subpath<Pt2>], style: &Style) {
+        let fill = match style.fill.filter(fill_paints) {
+            Some(Fill {
+                paint: Paint::Flat(colour),
+                alpha,
+            }) => Some((hex(colour), alpha)),
+            Some(Fill {
+                paint: Paint::Gradient(gradient),
+                alpha,
+            }) => self
+                .write_gradient(&gradient)
+                .map(|id| (format!("url(#{id})"), alpha)),
+            None => None,
+        };
         self.buf.push_str("<path d=\"");
         for (i, sub) in subpaths.iter().enumerate() {
             if i > 0 {
@@ -237,13 +256,11 @@ impl SvgSink {
             write_subpath(&mut self.buf, sub);
         }
         self.buf.push('"');
-        match style.fill.filter(fill_paints) {
-            Some(fill) => {
+        match fill {
+            Some((paint, alpha)) => {
                 let _ = write!(
                     self.buf,
-                    " fill=\"{}\" fill-opacity=\"{}\" fill-rule=\"nonzero\"",
-                    hex(fill.colour),
-                    fill.alpha,
+                    " fill=\"{paint}\" fill-opacity=\"{alpha}\" fill-rule=\"nonzero\"",
                 );
             }
             None => self.buf.push_str(" fill=\"none\""),
@@ -261,6 +278,47 @@ impl SvgSink {
             self.buf.push_str(" stroke=\"none\"");
         }
         let _ = writeln!(self.buf, "/>");
+    }
+
+    /// One `<linearGradient>` or `<radialGradient>` element in image
+    /// coordinates, returning its id; `None`, writing nothing, when the
+    /// frame is singular, which `PpmSink` paints as nothing too
+    /// (SPEC-0016 §2.8).
+    ///
+    /// The frame is the `gradientTransform`, so the element's own geometry
+    /// is the unit axis or the unit circle, and one form serves every pose.
+    fn write_gradient(&mut self, gradient: &Gradient) -> Option<String> {
+        let (o, x, y) = gradient.frame();
+        gradient.offset_at(o)?;
+        let id = format!("g{}", self.gradients);
+        self.gradients += 1;
+        let (element, unit) = match gradient.kind() {
+            GradientKind::Linear => ("linearGradient", "x1=\"0\" y1=\"0\" x2=\"1\" y2=\"0\""),
+            GradientKind::Radial => ("radialGradient", "cx=\"0\" cy=\"0\" r=\"1\""),
+        };
+        let _ = writeln!(
+            self.buf,
+            "<{element} id=\"{id}\" gradientUnits=\"userSpaceOnUse\" \
+             gradientTransform=\"matrix({} {} {} {} {} {})\" {unit} \
+             spreadMethod=\"pad\">",
+            x.x - o.x,
+            x.y - o.y,
+            y.x - o.x,
+            y.y - o.y,
+            o.x,
+            o.y,
+        );
+        for stop in gradient.stops() {
+            let _ = writeln!(
+                self.buf,
+                "<stop offset=\"{}\" stop-color=\"{}\" stop-opacity=\"{}\"/>",
+                stop.offset,
+                hex(stop.colour),
+                stop.alpha,
+            );
+        }
+        let _ = writeln!(self.buf, "</{element}>");
+        Some(id)
     }
 }
 
@@ -349,6 +407,7 @@ impl FrameSink for SvgSink {
 
     fn frame(&mut self, index: usize, prims: &[Prim2]) -> io::Result<()> {
         self.buf.clear();
+        self.gradients = 0;
         self.buf.push_str(&self.header);
         for p in prims {
             self.write_prim(p);
@@ -370,4 +429,47 @@ fn debug_assert_finite(p: &Pt2) {
         p.x.is_finite() && p.y.is_finite(),
         "Scene::eval's finite-coordinate invariant was violated"
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Stop;
+
+    /// A singular image-space frame writes `fill="none"` and no element,
+    /// matching `PpmSink`, which paints nothing (SPEC-0016 §2.8).
+    #[test]
+    fn a_singular_gradient_frame_writes_fill_none() {
+        let stops = [
+            Stop {
+                offset: 0.0,
+                colour: Rgb::WHITE,
+                alpha: 1.0,
+            },
+            Stop {
+                offset: 1.0,
+                colour: Rgb::BLACK,
+                alpha: 1.0,
+            },
+        ];
+        let g = Gradient::radial(Pt2 { x: 0.0, y: 0.0 }, 1.0, &stops)
+            .expect("valid")
+            .map_frame(|p| Some(Pt2 { x: p.x, y: 0.0 }))
+            .expect("maps");
+        let dir = std::env::temp_dir().join("motoreel-r0016-singular-svg");
+        let mut sink = SvgSink::with_view(&dir, (10, 10), (2.0, 2.0)).expect("sink");
+        let style = Style {
+            width: 0.0,
+            fill: Some(Fill::gradient(g, 1.0)),
+            ..Style::default()
+        };
+        let square = Subpath::new(Pt2 { x: 0.0, y: 0.0 })
+            .line_to(Pt2 { x: 1.0, y: 0.0 })
+            .line_to(Pt2 { x: 1.0, y: 1.0 })
+            .close();
+        sink.write_path(&[square], &style);
+        assert!(!sink.buf.contains("Gradient"), "{}", sink.buf);
+        assert!(sink.buf.contains(" fill=\"none\""), "{}", sink.buf);
+        assert_eq!(sink.gradients, 0, "no id spent");
+    }
 }

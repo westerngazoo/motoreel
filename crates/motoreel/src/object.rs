@@ -39,7 +39,9 @@ pub enum Shape {
 pub struct Object {
     /// Model-space geometry, posed by `track` at evaluation time.
     pub shape: Shape,
-    /// Stroke and fill, carried to the emitted primitive unchanged (AC4).
+    /// Stroke and fill, carried to the emitted primitive unchanged (AC4);
+    /// a path's gradient fill rides the track like its control points
+    /// (SPEC-0016 §2.6).
     pub style: Style,
     /// Pose over time (SPEC-0001); a single key means a static object.
     pub track: Track,

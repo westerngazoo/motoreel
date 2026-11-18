@@ -58,6 +58,7 @@ M3 glyph work.
 | R-0007 | Anchored text labels: strings pinned to a world point, a body's pose, or a screen corner; rendered by both sinks | SPEC-0007 | **Met** — QA-signed-off 2026-08-27; both sinks, 95-glyph embedded face |
 | R-0008 | *(next)* Declarative scenes: describe a scene as data and render it without writing Rust — the physics-lab manifest pattern, applied to film | — | Backlog |
 | R-0012 | Paths and fills: `MoveTo/LineTo/CubicTo/Close`, nonzero-winding fills with opacity, trig-free circle and other shape generators, both sinks (unblocks physics-lab RFC-002 areas and the friction circle) | SPEC-0012 | **In review**: implemented, 90/90 acceptance tests green, PR open |
+| R-0016 | Gradient fills: linear and radial, 2–8 stops, pad, sRGB interpolation; geometry rides the object; deterministic 8 × 8 Bayer dither in `PpmSink` against banding; native SVG gradients (the «juguete + rayos X» shading, spotlight and vignette). Bloom/additive blending, clip paths and isometric projection are separate, later requirements | SPEC-0016 | **In review**: implemented, 37/37 acceptance tests green, PR open |
 
 **Why the renumber.** The M3/M4 requirements below shift up by two; the
 GA glyphs and incidence shapes keep their content and lose their old ids.

@@ -41,8 +41,8 @@ use garust::{pga, Motor3, Pga3};
 use motoreel::path::split_cubic;
 use motoreel::shapes::{arc, circle, polygon, rounded_rect, sector};
 use motoreel::{
-    Align, Camera, Fill, FrameSink, Object, PpmSink, Prim2, Pt2, Rgb, Scene, Seg, Shape, Style,
-    Subpath, SvgSink, Track,
+    Align, Camera, Fill, FrameSink, Object, Paint, PpmSink, Prim2, Pt2, Rgb, Scene, Seg, Shape,
+    Style, Subpath, SvgSink, Track,
 };
 
 /// The shipped card demo, included from the example source itself so the
@@ -1213,7 +1213,7 @@ mod ac2 {
         assert_eq!(
             HALF_WHITE,
             Fill {
-                colour: Rgb::WHITE,
+                paint: Paint::Flat(Rgb::WHITE),
                 alpha: 0.5
             }
         );
@@ -4290,8 +4290,12 @@ mod ac12 {
         let mut colours = Vec::new();
         for prim in card::scene().eval(0.0) {
             if let Prim2::Path { style, .. } = prim {
-                if let Some(f) = style.fill {
-                    colours.push(f.colour);
+                if let Some(Fill {
+                    paint: Paint::Flat(colour),
+                    ..
+                }) = style.fill
+                {
+                    colours.push(colour);
                 }
                 if stroke_visible(&style) {
                     colours.push(style.stroke);

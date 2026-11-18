@@ -10,11 +10,13 @@
 //! projection), and R-0003 (`SvgSink` and the render walk). M2 begins
 //! with R-0004: recording a physics rollout into ordinary motor tracks.
 //! The creator pipeline (MC) adds R-0006 (`PpmSink`), R-0007 (anchored
-//! labels), R-0009 (real type) and R-0012 (paths and fills: [`path`],
-//! [`shapes`], [`Fill`]).
+//! labels), R-0009 (real type), R-0012 (paths and fills: [`path`],
+//! [`shapes`], [`Fill`]) and R-0016 (gradient fills: [`gradient`],
+//! [`Paint`]).
 
 mod camera;
 mod ease;
+pub mod gradient;
 pub mod label;
 mod object;
 pub mod path;
@@ -29,11 +31,12 @@ mod track;
 
 pub use camera::{Camera, Projection};
 pub use ease::Ease;
+pub use gradient::{Gradient, GradientError, GradientKind, Stop};
 pub use label::{Anchor, Label, ScreenAnchor};
 pub use object::{Object, Shape};
 pub use path::{Seg, Subpath};
 pub use ppm::PpmSink;
-pub use prim::{Align, Fill, Prim2, Pt2, Rgb, Style};
+pub use prim::{Align, Fill, Paint, Prim2, Pt2, Rgb, Style};
 pub use record::{record, RecordError};
 pub use scene::{ObjectId, Scene};
 pub use sink::FrameSink;

@@ -6,7 +6,7 @@ use crate::camera::{Camera, Projection};
 use crate::label::Label;
 use crate::object::{Object, Shape};
 use crate::path::{bernstein, split_cubic, Seg, Subpath};
-use crate::prim::{Prim2, Pt2, Style};
+use crate::prim::{Fill, Paint, Prim2, Pt2, Style};
 
 /// Pinhole path tolerance, as a fraction of the view's shorter side
 /// (SPEC-0012 §2.4): 0.054 px at 1080 × 1920, and under 0.1 px on any
@@ -163,8 +163,28 @@ fn project_shape(
         }
         Shape::Path(subpaths) => Prim2::Path {
             subpaths: project_path(subpaths, to_view, projection, pinhole_tol)?,
-            style,
+            style: pose_fill(style, |q| pt(&pga::Point::new(q.x, q.y, 0.0)))?,
         },
+    })
+}
+
+/// A path's style with its gradient, if it has one, carried into image
+/// space by `map`: the model plane `z = 0` through the pose and the camera
+/// (SPEC-0016 §2.6). `None` culls the primitive whole when a frame point
+/// fails to project, the rule control points follow.
+///
+/// Everything else is verbatim, a flat fill included.
+fn pose_fill(style: Style, map: impl Fn(Pt2) -> Option<Pt2>) -> Option<Style> {
+    let Some(Fill {
+        paint: Paint::Gradient(gradient),
+        alpha,
+    }) = style.fill
+    else {
+        return Some(style);
+    };
+    Some(Style {
+        fill: Some(Fill::gradient(gradient.map_frame(map)?, alpha)),
+        ..style
     })
 }
 
