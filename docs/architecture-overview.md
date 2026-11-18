@@ -12,7 +12,9 @@ motoreel/crates/motoreel/src/
 ├── scene.rs, object.rs # Scene graph
 ├── camera.rs           # Projection (matrices allowed here)
 ├── record.rs           # Physics rollout → tracks
-├── prim.rs, label.rs   # 2D primitives + anchored labels
+├── prim.rs, label.rs   # 2D primitives (Style, Fill, Paint) + anchored labels
+├── path.rs, shapes.rs  # Cubic paths + shape generators (R-0012)
+├── gradient.rs         # Linear/radial gradients: stops, frame, offset, colour (R-0016)
 └── sink.rs, svg.rs, ppm.rs
 ```
 

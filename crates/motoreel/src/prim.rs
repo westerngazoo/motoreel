@@ -4,6 +4,7 @@
 //! the concrete form of "the SVG sink never learns 3D existed". Paths
 //! borrow their generic shape from [`crate::path`], which is std-only too.
 
+use crate::gradient::Gradient;
 use crate::path::Subpath;
 
 /// A point in a plane: `x` right, `y` up.
@@ -41,15 +42,32 @@ impl Rgb {
     pub const BLACK: Rgb = Rgb { r: 0, g: 0, b: 0 };
 }
 
-/// Interior paint: one flat color and an opacity (R-0012 AC2).
+/// What an interior is painted with: one flat colour, or a colour that
+/// varies across it (R-0016).
 ///
-/// Gradients are a later requirement. Contract, as for [`Style`]: `alpha`
-/// in `[0, 1]`, documented, not validated. Sinks read it through a total
-/// clamp, and a non-finite `alpha` paints nothing (SPEC-0012 §2.13).
+/// The gradient variant is a few hundred bytes against the flat one's
+/// three; boxing it would cost `Copy`, which `Style` and every sink rely on
+/// (R-0016 §6), so the size difference is accepted.
+#[allow(clippy::large_enum_variant)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Paint {
+    /// One sRGB colour everywhere (R-0012).
+    Flat(Rgb),
+    /// A linear or radial gradient. Its geometry rides the object: see
+    /// [`Gradient`].
+    Gradient(Gradient),
+}
+
+/// Interior paint: a [`Paint`] and an opacity (R-0012 AC2, R-0016 AC1).
+///
+/// Contract, as for [`Style`]: `alpha` in `[0, 1]`, documented, not
+/// validated. Sinks read it through a total clamp, and a non-finite
+/// `alpha` paints nothing (SPEC-0012 §2.13). A gradient's stop opacity
+/// multiplies it, as SVG multiplies `stop-opacity` by `fill-opacity`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Fill {
-    /// Fill color.
-    pub colour: Rgb,
+    /// Flat colour or gradient.
+    pub paint: Paint,
     /// Fill opacity, 0 transparent to 1 opaque.
     pub alpha: f64,
 }
@@ -57,10 +75,21 @@ pub struct Fill {
 impl Fill {
     /// A flat fill of `colour` at `alpha`.
     ///
-    /// The constructor downstream code should use: the gradients
-    /// requirement can then grow `Fill` without breaking literals again.
+    /// Unchanged since R-0012: every scene built with it renders the
+    /// same bytes it did before gradients (R-0016 AC6).
     pub const fn solid(colour: Rgb, alpha: f64) -> Self {
-        Fill { colour, alpha }
+        Fill {
+            paint: Paint::Flat(colour),
+            alpha,
+        }
+    }
+
+    /// A gradient fill at `alpha` (R-0016).
+    pub const fn gradient(gradient: Gradient, alpha: f64) -> Self {
+        Fill {
+            paint: Paint::Gradient(gradient),
+            alpha,
+        }
     }
 }
 
@@ -201,7 +230,9 @@ pub enum Prim2 {
     Path {
         /// Image-space subpaths, in order.
         subpaths: Vec<Subpath<Pt2>>,
-        /// Stroke and fill, passed through unchanged.
+        /// Stroke and fill, passed through unchanged, except that a
+        /// gradient's frame is in image space: eval poses it with the
+        /// subpaths (SPEC-0016 §2.6).
         style: Style,
     },
 }

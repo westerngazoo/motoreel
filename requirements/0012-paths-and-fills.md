@@ -231,6 +231,8 @@ has to say what "correct" means under a pinhole camera (AC4, OQ-1).
 - **Not gradients.** Fills are one flat colour plus opacity. Linear and
   radial gradients are a later requirement: the area in the reference card
   is a yellow→green gradient, and the flat version is accepted for now.
+  *(Now [R-0016](0016-gradient-fills.md), which amends this non-goal
+  additively: a flat fill renders byte-for-byte as it did.)*
 - **Not even-odd.** SVG's other fill rule is not offered. Holes are made
   by orientation, which the nonzero rule already expresses.
 - **Not reveal or morph animations.** Drawing a path progressively (Manim's

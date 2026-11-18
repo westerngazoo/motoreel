@@ -21,8 +21,9 @@ use std::fs;
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 
+use crate::gradient::Gradient;
 use crate::path::{bernstein, Seg, Subpath};
-use crate::prim::{Align, Fill, Prim2, Pt2, Rgb, Style};
+use crate::prim::{Align, Fill, Paint, Prim2, Pt2, Rgb, Style};
 use crate::sink::FrameSink;
 
 /// A point in pixel space: x right, y **down**, pixel centres at `+0.5`.
@@ -428,7 +429,8 @@ impl Canvas {
     /// boundary is. Composited once per pixel, row-major.
     ///
     /// This builds the edge set; the band pass is [`nearest_boundary`],
-    /// and the interior pass with the composite is [`composite_fill`].
+    /// and the interior pass with the composite is [`composite_fill`]. The
+    /// paint is decided once, by [`ink_for`] (SPEC-0016 §2.7).
     fn draw_fill(&mut self, subpaths: &[Subpath<Pt2>], fill: Fill) {
         // A non-finite alpha paints nothing, +∞ included (SPEC-0012
         // §2.13), which `unit` alone would read as opaque. The SVG sink
@@ -438,6 +440,9 @@ impl Canvas {
             return;
         }
         let (scale, dims) = (self.scale, self.dims);
+        let Some((ink, alpha)) = ink_for(fill.paint, alpha, |p| to_pixel(p, scale, dims)) else {
+            return;
+        };
         // The scratch buffers, named for what a fill keeps in them.
         let (edges, nearest) = (&mut self.segments, &mut self.coverage);
         edges.clear();
@@ -458,15 +463,7 @@ impl Canvas {
             return;
         };
         nearest_boundary(edges, tile, dims, nearest);
-        composite_fill(
-            edges,
-            nearest,
-            tile,
-            fill.colour,
-            alpha,
-            &mut self.pixels,
-            dims,
-        );
+        composite_fill(edges, nearest, tile, &ink, alpha, &mut self.pixels, dims);
     }
 
     fn pixels(&self) -> &[u8] {
@@ -609,6 +606,42 @@ fn nearest_boundary(edges: &[(Px, Px)], tile: Tile, dims: (u32, u32), nearest: &
     }
 }
 
+/// What a fill paints with, decided once per primitive (SPEC-0016 §2.7).
+///
+/// One lives on the stack per fill, so the variants' size difference
+/// costs nothing a box would save (as for [`Paint`]).
+#[allow(clippy::large_enum_variant)]
+enum Ink {
+    /// One colour: R-0012's composite, unchanged.
+    Flat(Rgb),
+    /// A varying gradient with its frame in pixel space, dithered.
+    Ramp(Gradient),
+}
+
+/// The ink and opacity for `paint` at fill opacity `alpha`, with a
+/// gradient's frame carried to pixel space by `map`; `None` paints nothing.
+///
+/// A singular pixel-space frame paints nothing, as the SVG sink writes
+/// `fill="none"`. A gradient whose stops are all equal *is* a flat colour
+/// and takes the flat path, so it is byte-identical to `Fill::solid`
+/// (R-0016 AC6).
+fn ink_for(paint: Paint, alpha: f64, map: impl Fn(Pt2) -> Px) -> Option<(Ink, f64)> {
+    match paint {
+        Paint::Flat(colour) => Some((Ink::Flat(colour), alpha)),
+        Paint::Gradient(gradient) => {
+            let g = gradient.map_frame(|p| {
+                let (x, y) = map(p);
+                Some(Pt2 { x, y })
+            })?;
+            g.offset_at(g.frame().0)?;
+            Some(match g.uniform() {
+                Some(stop) => (Ink::Flat(stop.colour), alpha * stop.alpha),
+                None => (Ink::Ramp(g), alpha),
+            })
+        }
+    }
+}
+
 /// The interior pass of a fill and its one composite per pixel, row-major
 /// (SPEC-0012 §2.6): a finite `nearest` distance `s` takes the ramp
 /// `unit(0.5 + s)`; every other pixel is 1 inside and 0 outside.
@@ -618,11 +651,14 @@ fn nearest_boundary(edges: &[(Px, Px)], tile: Tile, dims: (u32, u32), nearest: &
 /// number is the full sum. The list is a filter with exact set equality,
 /// not a scanline walk — nothing is carried along the row (SPEC-0006
 /// §2.7, point 3).
+///
+/// A flat ink composites exactly as R-0012 did. A ramp is evaluated at
+/// the pixel centre and dithered (SPEC-0016 §2.7).
 fn composite_fill(
     edges: &[(Px, Px)],
     nearest: &[f64],
     tile: Tile,
-    colour: Rgb,
+    ink: &Ink,
     alpha: f64,
     pixels: &mut [u8],
     dims: (u32, u32),
@@ -634,18 +670,63 @@ fn composite_fill(
         row.extend(edges.iter().copied().filter(|&(a, b)| spans(a, b, cy)));
         for x in tile.x0..tile.x1 {
             let s = nearest[tile.offset(x, y)];
+            let cx = f64::from(x) + 0.5;
             let cov = if s.is_finite() {
                 unit(0.5 + s)
-            } else if inside(&row, (f64::from(x) + 0.5, cy)) {
+            } else if inside(&row, (cx, cy)) {
                 1.0
             } else {
                 0.0
             };
             if cov > 0.0 {
                 let i = (y as usize * dims.0 as usize + x as usize) * 3;
-                src_over(&mut pixels[i..i + 3], colour, cov * alpha);
+                let dst = &mut pixels[i..i + 3];
+                match ink {
+                    Ink::Flat(colour) => src_over(dst, *colour, cov * alpha),
+                    Ink::Ramp(g) => {
+                        // `ink_for` checked the frame, so `None` is
+                        // unreachable; 0 is a total fallback, not a guess.
+                        let t = g.offset_at(Pt2 { x: cx, y: cy }).unwrap_or(0.0);
+                        let (colour, stop_alpha) = g.paint_at(t);
+                        dithered_over(dst, colour, cov * alpha * stop_alpha, threshold(x, y));
+                    }
+                }
             }
         }
+    }
+}
+
+/// The 8 × 8 Bayer index matrix (B. E. Bayer, "An optimum method for
+/// two-level rendition of continuous-tone pictures", ICC 1973), row-major
+/// by `y mod 8`, then `x mod 8` (SPEC-0016 §2.7).
+const BAYER: [[u8; 8]; 8] = [
+    [0, 32, 8, 40, 2, 34, 10, 42],
+    [48, 16, 56, 24, 50, 18, 58, 26],
+    [12, 44, 4, 36, 14, 46, 6, 38],
+    [60, 28, 52, 20, 62, 30, 54, 22],
+    [3, 35, 11, 43, 1, 33, 9, 41],
+    [51, 19, 59, 27, 49, 17, 57, 25],
+    [15, 47, 7, 39, 13, 45, 5, 37],
+    [63, 31, 55, 23, 61, 29, 53, 21],
+];
+
+/// The ordered-dither threshold of canvas pixel `(x, y)`, in `(0, 1)`:
+/// `(B + ½) / 64`. A function of the coordinates alone, so it is the same
+/// on every run, thread and frame, and it is fixed to the canvas, not the
+/// object.
+fn threshold(x: u32, y: u32) -> f64 {
+    (f64::from(BAYER[(y % 8) as usize][(x % 8) as usize]) + 0.5) / 64.0
+}
+
+/// Source-over in 8-bit sRGB, like [`src_over`], but quantised by
+/// `floor(v + θ)` instead of `round(v)` (SPEC-0016 §2.7).
+///
+/// `θ ∈ (0, 1)`, so an integer `v` is kept exactly and `v + θ < 256`. The
+/// 64 thresholds average ½, so the block mean follows `v` without bias.
+fn dithered_over(dst: &mut [u8], src: [f64; 3], a: f64, theta: f64) {
+    for (slot, s) in dst.iter_mut().zip(src) {
+        let out = s * a + f64::from(*slot) * (1.0 - a);
+        *slot = (out + theta).floor() as u8; // `out + θ ∈ (0, 256)`; the cast saturates
     }
 }
 
@@ -1139,5 +1220,64 @@ mod tests {
             sink.canvas.pixels().iter().all(|&b| b == 0),
             "nothing painted"
         );
+    }
+
+    // ==== R-0016: the dither and the ink (SPEC-0016 §2.7) ====
+
+    /// The thresholds are the 64 values `(k + ½)/64`, each once, so they
+    /// lie in `(0, 1)` and average exactly ½: the dither is unbiased.
+    #[test]
+    fn bayer_thresholds_are_each_level_once_and_average_a_half() {
+        let mut seen = [false; 64];
+        let mut sum = 0.0;
+        for y in 0..8 {
+            for x in 0..8 {
+                let t = threshold(x, y);
+                assert!(t > 0.0 && t < 1.0);
+                let k = (t * 64.0 - 0.5) as usize;
+                assert!(!seen[k], "level {k} twice");
+                seen[k] = true;
+                sum += t;
+                assert_eq!(threshold(x + 8, y + 16), t, "period 8");
+            }
+        }
+        assert_eq!(sum / 64.0, 0.5);
+    }
+
+    /// An integer composite is kept exactly, and the top of the range does
+    /// not wrap.
+    #[test]
+    fn dithered_over_keeps_integers_and_saturates_at_255() {
+        for theta in [threshold(0, 0), threshold(7, 3)] {
+            let mut px = [0, 77, 255];
+            dithered_over(&mut px, [12.0, 200.0, 255.0], 1.0, theta);
+            assert_eq!(px, [12, 200, 255]);
+        }
+    }
+
+    /// A gradient whose pixel-space frame is singular paints nothing, the
+    /// case the SVG sink writes as `fill="none"`.
+    #[test]
+    fn a_singular_gradient_frame_paints_no_ink() {
+        let g = Gradient::radial(
+            Pt2 { x: 0.0, y: 0.0 },
+            1.0,
+            &[
+                crate::Stop {
+                    offset: 0.0,
+                    colour: Rgb::WHITE,
+                    alpha: 1.0,
+                },
+                crate::Stop {
+                    offset: 1.0,
+                    colour: Rgb::BLACK,
+                    alpha: 1.0,
+                },
+            ],
+        )
+        .expect("valid");
+        let collapse = |p: Pt2| (p.x, 0.0);
+        assert!(ink_for(Paint::Gradient(g), 1.0, collapse).is_none());
+        assert!(ink_for(Paint::Gradient(g), 1.0, |p| (p.x, p.y)).is_some());
     }
 }

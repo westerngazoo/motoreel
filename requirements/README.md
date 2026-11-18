@@ -38,3 +38,4 @@ the requirement(s) it satisfies. The mapping is maintained in
 | [R-0003](0003-svg-sink.md) | `SvgSink` and the first rendered animation | M1 | Met |
 | [R-0004](0004-physics-playback.md) | Physics playback: record a simulated rollout into motor tracks | M2 | Met |
 | [R-0012](0012-paths-and-fills.md) | Paths and fills: cubic Bézier paths, nonzero fills, shape generators | MC | Accepted (In review) |
+| [R-0016](0016-gradient-fills.md) | Gradient fills: linear and radial, 2–8 stops, dithered raster, native SVG | MC | Accepted (In review) |
