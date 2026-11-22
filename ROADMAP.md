@@ -59,6 +59,8 @@ M3 glyph work.
 | R-0008 | *(next)* Declarative scenes: describe a scene as data and render it without writing Rust — the physics-lab manifest pattern, applied to film | — | Backlog |
 | R-0012 | Paths and fills: `MoveTo/LineTo/CubicTo/Close`, nonzero-winding fills with opacity, trig-free circle and other shape generators, both sinks (unblocks physics-lab RFC-002 areas and the friction circle) | SPEC-0012 | **In review**: implemented, 90/90 acceptance tests green, PR open |
 | R-0016 | Gradient fills: linear and radial, 2–8 stops, pad, sRGB interpolation; geometry rides the object; deterministic 8 × 8 Bayer dither in `PpmSink` against banding; native SVG gradients (the «juguete + rayos X» shading, spotlight and vignette). Bloom/additive blending, clip paths and isometric projection are separate, later requirements | SPEC-0016 | **In review**: implemented, 37/37 acceptance tests green, PR open |
+| R-0017 | Interchangeable finish («acabado»): a surface (outline, normal, depth, stable id, material) and a finish trait over a batch; `Facetas` reproduces rf-marca's low poly byte for byte. `Pintura`, `Cel`, `RayosX` get their own requirements (guion-video-creator ADR-0006) | — | **Draft**: awaits the owner's OK on the ACs |
+| R-0018 | Faceted 3D: low-poly meshes posed by `Motor3`, back-face cull, deterministic painter's sort, faces painted by an R-0017 finish through the existing 2D pipeline | — | **Draft**: awaits the owner's OK on the ACs |
 
 **Why the renumber.** The M3/M4 requirements below shift up by two; the
 GA glyphs and incidence shapes keep their content and lose their old ids.

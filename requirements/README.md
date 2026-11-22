@@ -39,3 +39,5 @@ the requirement(s) it satisfies. The mapping is maintained in
 | [R-0004](0004-physics-playback.md) | Physics playback: record a simulated rollout into motor tracks | M2 | Met |
 | [R-0012](0012-paths-and-fills.md) | Paths and fills: cubic Bézier paths, nonzero fills, shape generators | MC | Accepted (In review) |
 | [R-0016](0016-gradient-fills.md) | Gradient fills: linear and radial, 2–8 stops, dithered raster, native SVG | MC | Accepted (In review) |
+| [R-0017](0017-interchangeable-finish.md) | Interchangeable finish («acabado»): surfaces + a finish trait; `Facetas` byte-identical to today's low poly | MC | Draft |
+| [R-0018](0018-faceted-3d.md) | Faceted 3D: motor-posed low-poly meshes, back-face cull, painter's sort, painted by an R-0017 finish | MC | Draft |
