@@ -170,10 +170,15 @@ materials (Khronos, 2017).
   the usual stream.
 - **Not palette tokens.** motoreel sees `Rgb`. Token-to-colour mapping stays in
   each account's brand layer (rf-marca, guion-marca).
-- **Not real-time.** This is the offline backend's finish. A real-time backend
-  re-implements the same *named* finishes as shaders against the same
-  description (ADR-0006). Byte equality between the two backends is not a
-  goal. Only "the same look by name" is.
+- **Not the app's renderer.** This is the offline backend's finish. The
+  Goose Physics app (fitAI: a Flutter client, web first) reaches the kit's
+  pieces through a bridge that is still to be chosen (ADR-0006: rendered
+  assets, motoreel compiled to WASM, or Flutter-native drawing from the same
+  data). If that bridge draws natively, it re-implements the same *named*
+  finishes. Byte equality across backends is not a goal. Only "the same look
+  by name" is. If the bridge runs motoreel itself, the finishes come along
+  unchanged, which this requirement already allows because it adds no
+  dependency and no platform-specific code (AC9).
 
 ## 5. Open questions
 
@@ -239,3 +244,6 @@ materials (Khronos, 2017).
 
 - 2026-11-22: created as Draft. The owner approved the direction; the
   acceptance criteria await his OK.
+- 2026-11-22: §4 revised. The app already exists (fitAI, Flutter, web
+  first), so the "real-time backend re-implements as shaders" line becomes
+  the bridge options of ADR-0006.
