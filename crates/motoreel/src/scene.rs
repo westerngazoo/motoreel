@@ -3,10 +3,12 @@
 use garust::{pga, Motor3};
 
 use crate::camera::{Camera, Projection};
+use crate::finish::{Finish, FrameCtx, Light, Surface};
 use crate::label::Label;
 use crate::object::{Object, Shape};
 use crate::path::{bernstein, split_cubic, Seg, Subpath};
 use crate::prim::{Fill, Paint, Prim2, Pt2, Style};
+use crate::solid::{self, Posed};
 
 /// Pinhole path tolerance, as a fraction of the view's shorter side
 /// (SPEC-0012 §2.4): 0.054 px at 1080 × 1920, and under 0.1 px on any
@@ -32,6 +34,24 @@ impl ObjectId {
     pub(crate) fn index(self) -> usize {
         self.0
     }
+}
+
+/// How [`Scene::eval_with`] paints mesh objects: one finish for every
+/// depth group, a light in view space, and the seed a finish may vary by
+/// (R-0017 AC4).
+///
+/// Chosen per render rather than stored on an object or the scene: both
+/// are plain-data structs that callers build field by field, so a new
+/// field would break them (SPEC-0018 §2.5).
+#[derive(Clone, Copy)]
+pub struct Look<'a> {
+    /// The finish.
+    pub finish: &'a dyn Finish,
+    /// The light, in view space ([`Camera::view_direction`] turns a world
+    /// direction into one).
+    pub light: Light,
+    /// Handed to the finish in its [`FrameCtx`].
+    pub seed: u64,
 }
 
 /// A renderable description: objects in draw order, one camera, and a
@@ -80,11 +100,92 @@ impl Scene {
     /// one composed motor into view space, surviving primitives are
     /// emitted in draw order. Total and deterministic; culled primitives
     /// are simply absent (SPEC-0002 §2.5).
+    ///
+    /// Mesh objects (R-0018) need a finish and a light, which this call
+    /// does not have: they emit nothing here. Paint them with
+    /// [`Scene::eval_with`].
     pub fn eval(&self, t: f64) -> Vec<Prim2> {
+        self.eval_looked(t, None)
+    }
+
+    /// [`Scene::eval`], with mesh objects painted through `look`
+    /// (R-0018 AC5, SPEC-0018 §2.5).
+    ///
+    /// A maximal run of consecutive mesh objects is one **depth group**: its
+    /// faces are ordered together ([`Scene::surfaces`]) and painted as one
+    /// batch, at the draw-order slot of the run's first object. Every other
+    /// object keeps its insertion-order slot, exactly as in `eval`.
+    pub fn eval_with(&self, t: f64, look: &Look) -> Vec<Prim2> {
+        self.eval_looked(t, Some(look))
+    }
+
+    /// The surfaces of each depth group at `t`, far to near, groups in draw
+    /// order (SPEC-0018 §2.4). Ids are `(object index << 32) | face index`.
+    pub fn surfaces(&self, t: f64) -> Vec<Vec<Surface>> {
+        let view = self.camera.pose.inverse();
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i < self.objects.len() {
+            let end = self.mesh_run_end(i);
+            if end > i {
+                out.push(self.group_surfaces(i, end, &view, t));
+                i = end;
+            } else {
+                i += 1;
+            }
+        }
+        out
+    }
+
+    /// The end of the run of consecutive mesh objects starting at `i`
+    /// (`i` itself when object `i` is not a mesh).
+    fn mesh_run_end(&self, i: usize) -> usize {
+        i + self.objects[i..]
+            .iter()
+            .take_while(|o| matches!(o.shape, Shape::Mesh(_)))
+            .count()
+    }
+
+    /// The ordered surfaces of mesh objects `start..end`.
+    fn group_surfaces(&self, start: usize, end: usize, view: &Motor3, t: f64) -> Vec<Surface> {
+        let posed: Vec<Posed> = (start..end)
+            .filter_map(|index| {
+                // `if let`, not a `match` with a catch-all: R-0012 AC1 keeps
+                // every `Shape` match in this file exhaustive by name.
+                let obj = &self.objects[index];
+                if let Shape::Mesh(mesh) = &obj.shape {
+                    Some(Posed {
+                        index,
+                        mesh,
+                        to_view: view.compose(&obj.track.eval(t)),
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect();
+        solid::surfaces(&posed, self.camera.projection)
+    }
+
+    /// The one evaluation walk; `look` is `None` for [`Scene::eval`].
+    fn eval_looked(&self, t: f64, look: Option<&Look>) -> Vec<Prim2> {
         let view = self.camera.pose.inverse();
         let pinhole_tol = PINHOLE_REL_TOL * self.view.0.min(self.view.1);
         let mut prims = Vec::with_capacity(self.objects.len() + self.labels.len());
-        for obj in &self.objects {
+        let mut i = 0;
+        while i < self.objects.len() {
+            let end = self.mesh_run_end(i);
+            if end > i {
+                if let Some(look) = look {
+                    let batch = self.group_surfaces(i, end, &view, t);
+                    let ctx = FrameCtx { t, seed: look.seed };
+                    prims.extend(look.finish.paint(&batch, &look.light, &ctx));
+                }
+                i = end;
+                continue;
+            }
+            let obj = &self.objects[i];
+            i += 1;
             let to_view = view.compose(&obj.track.eval(t)); // pose, then view
             let projected = project_shape(
                 &obj.shape,
@@ -165,6 +266,8 @@ fn project_shape(
             subpaths: project_path(subpaths, to_view, projection, pinhole_tol)?,
             style: pose_fill(style, |q| pt(&pga::Point::new(q.x, q.y, 0.0)))?,
         },
+        // Painted through a finish by `eval_with`, never one at a time.
+        Shape::Mesh(_) => return None,
     })
 }
 

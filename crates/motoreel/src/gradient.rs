@@ -256,8 +256,10 @@ impl Gradient {
     /// `None` if any frame point fails to map.
     ///
     /// Exact for an affine `map` (SPEC-0016 §2.6). The result may be
-    /// singular, which [`Gradient::offset_at`] reports.
-    pub(crate) fn map_frame(&self, map: impl Fn(Pt2) -> Option<Pt2>) -> Option<Gradient> {
+    /// singular, which [`Gradient::offset_at`] reports. Public since
+    /// R-0018: a finish lays a gradient on a surface through the surface's
+    /// frame with it ([`crate::Surface::frame_point`]).
+    pub fn map_frame(&self, map: impl Fn(Pt2) -> Option<Pt2>) -> Option<Gradient> {
         Some(Gradient {
             origin: map(self.origin)?,
             x_end: map(self.x_end)?,

@@ -2,13 +2,15 @@
 
 use garust::{pga, Motor3};
 
+use crate::mesh::Mesh;
 use crate::path::Subpath;
 use crate::prim::{Pt2, Style};
 use crate::track::Track;
 
 /// Drawable model-space geometry as typed PGA points.
 ///
-/// R-0002's list, plus `Edges` (R-0004) and `Path` (R-0012); derived
+/// R-0002's list, plus `Edges` (R-0004), `Path` (R-0012) and `Mesh`
+/// (R-0018); derived
 /// incidence shapes (`JoinLine`, `MeetPoint`) arrive with M3.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Shape {
@@ -30,6 +32,11 @@ pub enum Shape {
     /// (SPEC-0012 §2.3). Posed by the object's track like every shape:
     /// its control points ride the motor, which is exact for a Bézier.
     Path(Vec<Subpath<pga::Point>>),
+    /// A low-poly solid (R-0018): planar convex faces with materials,
+    /// posed by the object's track like every shape. Painted only by
+    /// [`crate::Scene::eval_with`], through a finish; [`crate::Scene::eval`]
+    /// has no finish and emits nothing for it.
+    Mesh(Mesh),
 }
 
 /// A scene entry: geometry, paint style, and the motor track posing it.
@@ -71,6 +78,12 @@ impl Object {
     /// A path object with default style, holding the identity pose.
     pub fn path(subpaths: Vec<Subpath<pga::Point>>) -> Self {
         Object::with_shape(Shape::Path(subpaths))
+    }
+
+    /// A mesh object with default style, holding the identity pose. The
+    /// style is unused: a mesh is painted by its finish (R-0018).
+    pub fn mesh(mesh: Mesh) -> Self {
+        Object::with_shape(Shape::Mesh(mesh))
     }
 
     /// A path authored in a plane — the output of [`crate::shapes`] —

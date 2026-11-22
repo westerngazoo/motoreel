@@ -844,6 +844,8 @@ mod ac1 {
                 Shape::Polyline(_) => "polyline",
                 Shape::Edges(_) => "edges",
                 Shape::Path(_) => "path",
+                // R-0018 adds the mesh: the edit this tripwire exists to force.
+                Shape::Mesh(_) => "mesh",
             }
         }
         assert_eq!(prim_kind(&path_prim(Vec::new(), Style::default())), "path");
