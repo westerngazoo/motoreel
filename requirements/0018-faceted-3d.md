@@ -1,13 +1,13 @@
 # R-0018 — Faceted 3D («3D de facetas»)
 
-- **Status:** Draft
+- **Status:** Accepted, In progress (implemented; PR open)
 - **Milestone:** MC (the creator pipeline)
 - **Owner:** Gustavo Delgadillo (westerngazoo)
 - **Created:** 2026-11-22
 - **Depends on:** R-0017 (surfaces and finishes), R-0002 (`Camera`,
   `Projection::{Pinhole, Orthographic}`, the cull rule), R-0001 (`Track`,
   motor keyframes), R-0012 (`Prim2::Path`, nonzero fills)
-- **Realized by:** — (SPEC-0018, to be written after acceptance)
+- **Realized by:** [SPEC-0018](../specs/0018-faceted-3d.md)
 - **Architecture:** guion-video-creator
   [ADR-0006](https://github.com/westerngazoo/guion-video-creator/blob/main/docs/decisions/0006-layered-architecture-kit-and-finishes.md)
 - **QA:** `qa` agent run scoped to this requirement
@@ -85,8 +85,12 @@ its limits (§4).
     face's maximum view depth, then its minimum, then its mesh-local index).
     The comparison is `f64::total_cmp`, so ties never depend on sort
     stability or thread scheduling.
-  - The sort is within one mesh object. Objects keep R-0002's draw order,
-    insertion order (see §5 OQ-1).
+  - *(Amended 2026-11-22, OQ-1.)* The sort spans a **depth group**: a
+    maximal run of consecutive mesh objects. Within it, objects are ordered
+    as wholes (a separating face plane, else the mean depth of their visible
+    faces), and faces within an object by the key above. Every non-mesh
+    object keeps R-0002's insertion-order slot; a group sits at its first
+    object's slot.
 - **AC5. The finish paints the faces.** The surviving faces become R-0017
   surfaces:
   - outline = the projected polygon;
@@ -95,11 +99,16 @@ its limits (§4).
   - id = a stable hash of (object index, face index);
   - material = from the face's id.
 
-  They go to the object's finish as **one batch, in depth order**. With
+  *(Amended 2026-11-22: the id is `(object index << 32) | face index`,
+  stable and injective rather than a hash; the frame is the image of the
+  face's first three vertices.)* They go to the group's finish as **one
+  batch, in depth order**. With
   `Facetas`, the output is one `Prim2::Path` per face, in that order.
 - **AC6. Nothing already rendered moves.**
   - Every golden fixture is byte-unchanged and every existing test passes
-    unedited.
+    unedited, *with one forced exception (decision log, 2026-11-22):*
+    R-0012's exhaustiveness tripwire gains the `Shape::Mesh` arm it exists
+    to demand.
   - **Equivalence with 2D:** a one-face mesh facing an orthographic camera,
     painted with `Facetas`, yields a `Prim2` equal (`PartialEq`, exact
     `f64`) to the same polygon built with `Object::planar` and the style
@@ -110,7 +119,10 @@ its limits (§4).
 - **AC7. Seams do not leak.** Two coplanar faces that share an edge, painted
   opaque with `Facetas`, leave no pixel along the shared edge darker than
   both faces' colours in the PPM sink. This is the 1-px self-stroke rule rf-marca
-  measured: up to 8 levels darker without it.
+  measured: up to 8 levels darker without it. *(Amended 2026-11-22:* on an
+  oblique shared edge one pixel leaves a few levels; the criterion holds
+  exactly with a self-stroke of **2 px**, which the caller passes to
+  `Faceted`. See the decision log.*)*
 - **AC8. Gradients and finishes compose.** A face whose material asks for a
   gradient (a R-0016 paint chosen by the finish) carries it through the
   surface frame. Under orthographic projection the image-space gradient is
@@ -155,16 +167,31 @@ its limits (§4).
    dumbbell) would then interleave correctly. *Recommendation:* within one
    object for now. The kit builds one toy as one mesh with parts, which keeps
    `Scene::eval`'s draw-order contract untouched.
+   **Resolved (2026-11-22), against the recommendation, because the code
+   forces it:** a posable toy cannot be one mesh. A `Track` poses a whole
+   shape, so a forearm that curls while the upper arm hangs must be a
+   separate object. The sort therefore spans a depth group (a run of
+   consecutive mesh objects), and non-mesh objects keep their slots, so
+   `Scene::eval`'s contract still holds for everything else.
 2. **An oblique projection.** Add `Projection::Oblique` so `tres.rs` can move
    onto meshes byte-identically? rotorf-sico `docs/infra.md` §2b already
    lists it as "for later, little value today". *Recommendation:* not now.
+   **Resolved (2026-11-22):** not now.
 3. **Where finishes attach.** Is the finish a field of the mesh object, or
    chosen per render (`Scene` level), so one scene renders in two looks?
    *Recommendation:* per object, with a scene-level default.
+   **Resolved (2026-11-22), per render, because the code forces it:**
+   `Object` and `Scene` are public-field structs that callers build field
+   by field (guion-video-creator's `guion-render` does), so a new field on
+   either breaks them, against AC6. The finish travels in a `Look` passed to
+   `Scene::eval_with`; looks that vary per part come from the material's
+   layer (R-0017 OQ-3) and from composing finishes (R-0019's `Sweep`).
 4. **Low-poly generators in motoreel or in the kit.** Should the capsule,
    prism and faceted sphere generators live in motoreel or in the kit?
    *Recommendation:* the kit. motoreel ships the cube and the octahedron its
    own tests need, nothing more.
+   **Resolved (2026-11-22):** as recommended. The curl example carries its
+   own capsule, sphere, prism, band and box generators as kit-side code.
 
 ## 6. Decision log
 
@@ -173,6 +200,13 @@ its limits (§4).
 | 2026-11-22 | Draft written under the owner's approval of the direction («dale con tu recomendación»). The acceptance criteria await his OK | ADR-0006 |
 | 2026-11-22 | **Painter's algorithm, not a z-buffer** (proposed) | Keeps `Prim2` and the existing sinks as the only raster path, which also keeps SVG output vector. Newell, Newell & Sancha 1972 |
 | 2026-11-22 | **Faces become R-0017 surfaces** (proposed) | One painting layer for 2D and 3D. A flat piece and a camera-facing face are the same thing (AC6 equivalence) |
+| 2026-11-22 | **Accepted**, then **In progress**. After seeing the spike (PR #8) the owner chose «facetas con rayos x» and said «dale con el 3D». This approval covers R-0017 and R-0018; `Pintura` is not pursued now | The owner's words, 2026-11-22 |
+| 2026-11-22 | **Objects are ordered as wholes inside a depth group** | The spike's face-level sort left zigzags where solids meet and drew a big side face of one box over the top of its neighbour. A separating face plane orders two convex solids exactly (Newell, Newell & Sancha 1972); interpenetrating or enclosed parts fall back to the mean depth of their visible faces, so a joint shows one clean outline and a bone sits under its skin. Checked against a ray cast over 108 orbit views of the spike's platform as separate boxes, where a face-level sort fails |
+| 2026-11-22 | **Fallback key: mean visible depth, not nearest point** | Nearest point drew an inverted-hull ink outline over the box it outlines when seen from the front: the hull's far-side bottom face reaches as near as the box. Found in the curl example; pinned by a test |
+| 2026-11-22 | **`Scene::eval` emits nothing for a mesh; `Scene::eval_with(t, &Look)` paints it** | `eval` has no finish and no light. Its output for every scene without meshes is unchanged, byte for byte |
+| 2026-11-22 | **R-0012's `prim2_and_shape_gain_exactly_one_variant_each` gains one arm** | AC1 asks for a new `Shape` variant; that test is a tripwire written to fail on exactly this, so that the variant is added on purpose. One line added, nothing else in any existing test changed |
+| 2026-11-22 | **AC7 at 2 px** | Measured: with a 1 px self-stroke the darkest pixel on an oblique shared edge is a few levels short (the stroke's ramp covers only half a pixel each side); with 2 px it is exact. 2D reels keep rf-marca's 1 px (R-0017 AC5) |
+| 2026-11-22 | **`Gradient::map_frame` is public; `Camera::view_direction` added** | A finish lays a gradient through a surface frame (AC8) with the first; the second turns a world-fixed light into the view-space `Light` R-0017 asks for, with a motor |
 
 ## Prior art
 
@@ -209,5 +243,8 @@ its limits (§4).
 
 ## Changelog
 
+- 2026-11-22: accepted and implemented (SPEC-0018). OQ-1 and OQ-3 resolved
+  against their recommendations because the code forced it; AC4, AC5, AC6
+  and AC7 amended to match, as the decision log records.
 - 2026-11-22: created as Draft. The owner approved the direction; the
   acceptance criteria await his OK.

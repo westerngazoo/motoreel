@@ -1,13 +1,13 @@
 # R-0017 — Interchangeable finish («acabado»)
 
-- **Status:** Draft
+- **Status:** Accepted, In progress (implemented; PR open)
 - **Milestone:** MC (the creator pipeline)
 - **Owner:** Gustavo Delgadillo (westerngazoo)
 - **Created:** 2026-11-22
 - **Depends on:** R-0012 (`Prim2::Path`, `Fill`, `Style`, nonzero fills),
   R-0016 (gradient paint, the three-point frame that rides an object, the
   Bayer dither), R-0006 (`PpmSink`, determinism), R-0003 (`SvgSink`)
-- **Realized by:** — (SPEC-0017, to be written after acceptance)
+- **Realized by:** [SPEC-0017](../specs/0017-interchangeable-finish.md)
 - **Architecture:** guion-video-creator
   [ADR-0006](https://github.com/westerngazoo/guion-video-creator/blob/main/docs/decisions/0006-layered-architecture-kit-and-finishes.md)
   (the layered architecture this requirement is one layer of)
@@ -24,8 +24,8 @@ toon or x-ray by changing one value, and nothing else.
 
 Concretely:
 
-1. **A surface is data.** It carries an outline as `Subpath<Pt2>`, a unit
-   normal in view space (or "faces the viewer" for a flat 2D piece), a view
+1. **A surface is data.** It carries an outline as `Subpath<Pt2>`, a
+   normal in view space (not necessarily unit; see the decision log) (or "faces the viewer" for a flat 2D piece), a view
    depth, a stable `u64` id and a material. The material is a tone ramp from
    shadow to light, an opacity and an optional seam colour.
 2. **A finish is a trait.** It receives the whole batch, the light and a
@@ -76,8 +76,9 @@ materials (Khronos, 2017).
 - **AC1. The surface.** A public `Superficie`-like type (the name is the
   spec's call) holds:
   - an outline as `Vec<Subpath<Pt2>>` in image space;
-  - an orientation, either a unit normal `(x, y, z)` in view space or a
-    "faces the viewer" marker for flat 2D pieces;
+  - an orientation, either a normal `(x, y, z)` in view space, any
+    non-zero length (decision log, 2026-11-22), or a "faces the viewer"
+    marker for flat 2D pieces;
   - a finite view depth;
   - a stable id (`u64`), chosen by the caller and constant across frames for
     the same piece;
@@ -187,16 +188,26 @@ materials (Khronos, 2017).
    groups inside a batch (e.g. two toys side by side, each quantised on its
    own)? *Recommendation:* one batch is one figure. The caller makes one call
    per figure, which keeps the trait minimal.
+   **Resolved (2026-11-22):** as recommended. R-0018 makes one batch per
+   depth group, which is one figure.
 2. **Where the house light lives.** `VELA` is brand data, so this
    recommendation keeps it out of motoreel. Should the light come from
    `cuenta.toml` (guion-marca) so each account can tilt it?
+   **Resolved (2026-11-22):** motoreel ships no house light; the caller
+   passes a `Light`. Where the brand layer keeps it (`cuenta.toml` or
+   rf-marca) is the kit's decision, not motoreel's.
 3. **The `RayosX` tag.** Is the exterior/interior tag an attribute of the
    surface or of the material? AC7 forces the decision during the spec.
+   **Resolved (2026-11-22):** of the **material**: `Layer::{Solid, Skin,
+   Inner}`. It says what the stuff is, as glTF keeps `alphaMode` on the
+   material, and a mesh face already picks its material by id.
 4. **Names.** Should the public names be Spanish (`Acabado`, `Facetas`,
    `Superficie`, the house's words) or English like the rest of the public API
    (`Finish`, `Faceted`, `Surface`)? *Recommendation:* English types in
    motoreel, with the Spanish names in the doc comments. The house's Spanish
    names live in the kit (ADR-0006).
+   **Resolved (2026-11-22):** as recommended: `Finish` («acabado»),
+   `Faceted` («Facetas»), `Surface`, `Material`, `Layer`, `Light`.
 
 ## 6. Decision log
 
@@ -206,6 +217,11 @@ materials (Khronos, 2017).
 | 2026-11-22 | **Batch, not per-surface, painting** (proposed) | Today's tones are quantised by population over the whole figure (rf-marca `cuantizar`). A per-surface trait could not reproduce them, and AC5 would fail by construction |
 | 2026-11-22 | **Stable surface id plus a frame that rides the piece** (proposed) | Temporal coherence for marks placed on surfaces: Meier, *Painterly Rendering for Animation*, SIGGRAPH 1996, attaches particles to surfaces for the same reason. Reuses R-0016's three-point frame instead of inventing a second pose representation |
 | 2026-11-22 | **`Facetas` is defined by equality with rf-marca's helpers** (proposed) | The byte-identity promise is only checkable if the reference is executable. The helpers are small and pure, so the tests can copy them verbatim as oracles |
+| 2026-11-22 | **Accepted**, then **In progress**. After seeing the spike (PR #8) the owner chose «facetas con rayos x» and said «dale con el 3D». This approval covers R-0017 and R-0018; `Pintura` is not pursued now | The owner's words, 2026-11-22 |
+| 2026-11-22 | **The normal is not normalised by the surface** (AC1 said "unit") | Forced by AC5: rf-marca's `lambert` divides the *raw* cross product by its length. A surface that normalised first would change the last bit of the light value, and with it a band at a cut. Finishes normalise, in rf-marca's order |
+| 2026-11-22 | **Band k of N reads ramp index `k·len/N`** | A ramp as long as the band count reads one to one, which is every rf-marca call; a longer or shorter ramp still spans shadow to light |
+| 2026-11-22 | **Which helper `Faceted` emits:** a seam → `faceta_con_junta`; opaque → `faceta`; opacity < 1 → `velo` | AC5's three cases, decided by the material alone. `velo` at opacity 1 is the one rf-marca call `Faceted` does not reproduce: an opaque surface without a seam is a `faceta` |
+| 2026-11-22 | **`Layer::Inner` surfaces are hidden by `Faceted` and left out of its bands** | The inside must not change the outside's tones; `XRay` (R-0019) bands them among themselves |
 
 ## Prior art
 
@@ -244,6 +260,8 @@ materials (Khronos, 2017).
 
 - 2026-11-22: created as Draft. The owner approved the direction; the
   acceptance criteria await his OK.
+- 2026-11-22: accepted and implemented (SPEC-0017). Open questions
+  resolved; AC1's "unit normal" relaxed, as the decision log records.
 - 2026-11-22: §4 revised. The app already exists (fitAI, Flutter, web
   first), so the "real-time backend re-implements as shaders" line becomes
   the bridge options of ADR-0006.
