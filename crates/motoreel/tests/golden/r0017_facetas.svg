@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="160" height="90" viewBox="-1.6 -0.9 3.2 1.8">
+<g transform="scale(1 -1)">
+<path d="M -0.35,-0.35 L 0.35,-0.35 L 0.35,0.35 L -0.35,0.35 Z" fill="#26bee6" fill-opacity="1" fill-rule="nonzero" stroke="#26bee6" stroke-width="0.02" stroke-opacity="1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M -0.8,0.8 L -0.35,0.35 L 0.35,0.35 L 0.8,0.8 Z" fill="#a0f0ff" fill-opacity="1" fill-rule="nonzero" stroke="#a0f0ff" stroke-width="0.02" stroke-opacity="1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M -0.8,-0.8 L -0.35,-0.35 L -0.35,0.35 L -0.8,0.8 Z" fill="#a0f0ff" fill-opacity="1" fill-rule="nonzero" stroke="#a0f0ff" stroke-width="0.02" stroke-opacity="1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 0.8,-0.8 L 0.35,-0.35 L -0.35,-0.35 L -0.8,-0.8 Z" fill="#126ea8" fill-opacity="1" fill-rule="nonzero" stroke="#126ea8" stroke-width="0.02" stroke-opacity="1" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 0.8,0.8 L 0.35,0.35 L 0.35,-0.35 L 0.8,-0.8 Z" fill="#2696c8" fill-opacity="1" fill-rule="nonzero" stroke="#2696c8" stroke-width="0.02" stroke-opacity="1" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</svg>

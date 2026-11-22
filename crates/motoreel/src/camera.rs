@@ -83,6 +83,23 @@ impl Camera {
     }
 }
 
+impl Camera {
+    /// A world-space direction in this camera's view space: what a
+    /// world-fixed light is, seen from here (R-0018). The camera's inverse
+    /// pose applied to the direction's two ends, a motor and nothing else.
+    #[must_use]
+    pub fn view_direction(&self, world: [f64; 3]) -> [f64; 3] {
+        let view = self.pose.inverse();
+        let (ox, oy, oz) = pga::Point::new(0.0, 0.0, 0.0)
+            .transform(&view)
+            .to_euclidean();
+        let (x, y, z) = pga::Point::new(world[0], world[1], world[2])
+            .transform(&view)
+            .to_euclidean();
+        [x - ox, y - oy, z - oz]
+    }
+}
+
 impl Default for Camera {
     /// Orthographic, standing 5 units back on +z, looking at the origin.
     fn default() -> Self {
