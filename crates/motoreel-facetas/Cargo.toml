@@ -1,0 +1,14 @@
+[package]
+name = "motoreel-facetas"
+version = "0.0.0"
+description = "SPIKE: faceted low-poly 3D on motoreel with interchangeable finishes (acabados). Not a requirement yet."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+# Poses are garust motors (Motor3::to_matrix once per part per frame).
+garust = { path = "../../../garust", features = ["physics"] }
+# The 2D pipeline the finishes emit into: Prim2, Fill, gradients, PpmSink.
+motoreel = { path = "../motoreel" }

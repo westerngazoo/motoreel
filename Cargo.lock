@@ -146,6 +146,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "motoreel-facetas"
+version = "0.0.0"
+dependencies = [
+ "garust",
+ "motoreel",
+]
+
+[[package]]
 name = "motoreel-typeset"
 version = "0.0.0"
 dependencies = [

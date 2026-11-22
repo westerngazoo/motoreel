@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/motoreel", "crates/motoreel-typeset"]
+members = ["crates/motoreel", "crates/motoreel-typeset", "crates/motoreel-facetas"]
 
 [workspace.package]
 edition = "2021"
