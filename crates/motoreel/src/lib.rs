@@ -36,6 +36,8 @@ mod scene;
 pub mod shapes;
 pub mod sink;
 mod solid;
+#[cfg(test)]
+mod solid_reference;
 pub mod svg;
 mod track;
 mod xray;

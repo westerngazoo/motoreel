@@ -13,8 +13,9 @@
 //!    separating-axis theorem for convex solids). Objects with no such
 //!    plane (interpenetrating parts at a joint, a bone inside its limb, an
 //!    ink hull around its part) are ordered by the mean depth of their
-//!    visible faces: the nearer one is drawn later. A deterministic topological sort turns the pairwise
-//!    orders into one, breaking any cycle at its farthest object.
+//!    visible faces: the nearer one is drawn later. A deterministic
+//!    topological sort turns the pairwise orders into one, breaking any
+//!    cycle at its farthest object.
 //! 2. **Faces within an object** are sorted far to near by their maximum
 //!    view depth, then their minimum, then their index.
 //!
@@ -23,6 +24,16 @@
 //! face of one box from sorting over a small box resting on it. Every
 //! comparison is `f64::total_cmp`, so ties never depend on sort stability
 //! or on threads.
+//!
+//! **Speed without a new answer (R-0022, SPEC-0022 §2).** The pairwise
+//! test asks, plane by plane in a fixed order, which side of the plane
+//! each object is on. What each object's own vertices say about each of
+//! its own planes is worked out once per frame, not once per pair; the
+//! other object's vertices are then read only as far as the first one that
+//! settles the question. Every side is the same expression on the same
+//! numbers as before, and the first separating plane in the same order
+//! still decides, so the order is the one R-0018 and R-0021 defined, bit
+//! for bit (the oracle is `solid_reference.rs`).
 
 use garust::Motor3;
 
@@ -55,12 +66,93 @@ struct Visible {
     surface: Surface,
 }
 
+/// A face plane in view space, with what every pairwise test needs of it
+/// worked out once per frame.
+struct Plane {
+    /// The face normal, unnormalised.
+    n: V3,
+    /// The face's first vertex.
+    p0: V3,
+    /// `|n|`.
+    len: f64,
+    /// `len` is finite and positive: a plane either test may use.
+    valid: bool,
+    /// Whether the eye sees the plane's positive side; `None` when the
+    /// plane cannot separate (invalid, or the eye lies on it).
+    eye: Option<bool>,
+}
+
+impl Plane {
+    fn new(n: V3, p0: V3, projection: Projection) -> Plane {
+        let len = dot(n, n).sqrt();
+        let valid = len.is_finite() && len > 0.0;
+        let mut plane = Plane {
+            n,
+            p0,
+            len,
+            valid,
+            eye: None,
+        };
+        if valid {
+            // The eye's side: positive means the eye sees the positive side.
+            let eye = match projection {
+                Projection::Orthographic => n[2],
+                Projection::Pinhole { .. } => plane.side(&[0.0, 0.0, 0.0]),
+            };
+            if !(eye.abs() <= SEPARATION_TOL || eye.is_nan()) {
+                plane.eye = Some(eye > 0.0);
+            }
+        }
+        plane
+    }
+
+    /// The signed distance of `v` from the plane, in view units.
+    fn side(&self, v: &V3) -> f64 {
+        dot(
+            self.n,
+            [v[0] - self.p0[0], v[1] - self.p0[1], v[2] - self.p0[2]],
+        ) / self.len
+    }
+}
+
+/// Which sides of a plane a set of vertices keeps to, within
+/// [`SEPARATION_TOL`]: `neg` when none is farther than it on the positive
+/// side, `pos` when none is on the negative side. A vertex whose side is
+/// NaN breaks neither, as the range fold it replaces ignored NaN.
+#[derive(Clone, Copy)]
+struct Sides {
+    neg: bool,
+    pos: bool,
+}
+
+impl Sides {
+    /// The sides `vertices` keep to, read only as far as needed: a side
+    /// not asked for (`want`) comes back `false`, and the scan stops once
+    /// every side asked for is broken.
+    fn of(plane: &Plane, vertices: &[V3], want: Sides) -> Sides {
+        let mut sides = want;
+        for v in vertices {
+            if !(sides.neg || sides.pos) {
+                break;
+            }
+            let s = plane.side(v);
+            if s > SEPARATION_TOL {
+                sides.neg = false;
+            }
+            if s < -SEPARATION_TOL {
+                sides.pos = false;
+            }
+        }
+        sides
+    }
+}
+
 /// One object's visible faces and what the object-level order needs.
 struct Node {
     index: usize,
     view: Vec<V3>,
-    /// Every face's plane (normal, a point on it), visible or not.
-    planes: Vec<(V3, V3)>,
+    /// Every face's plane, visible or not.
+    planes: Vec<Plane>,
     faces: Vec<Visible>,
     near: f64,
     far: f64,
@@ -73,53 +165,57 @@ struct Node {
 /// The surfaces of `group`, far to near (SPEC-0018 §2.4). Surface ids are
 /// `(object index << 32) | face index`.
 pub(crate) fn surfaces(group: &[Posed], projection: Projection) -> Vec<Surface> {
-    let nodes: Vec<Node> = group
+    let mut nodes: Vec<Node> = group
         .iter()
         .filter_map(|posed| node(posed, projection))
         .collect();
-    order(&nodes, projection)
-        .into_iter()
-        .flat_map(|k| nodes[k].faces.iter().map(|f| f.surface.clone()))
-        .collect()
+    let order = order(&nodes);
+    let mut out = Vec::with_capacity(nodes.iter().map(|n| n.faces.len()).sum());
+    for k in order {
+        out.extend(
+            std::mem::take(&mut nodes[k].faces)
+                .into_iter()
+                .map(|f| f.surface),
+        );
+    }
+    out
 }
 
 /// One object's visible faces, sorted far to near; `None` if none survive.
 fn node(posed: &Posed, projection: Projection) -> Option<Node> {
-    let view: Vec<V3> = posed
-        .mesh
-        .vertices()
-        .iter()
-        .map(|p| {
-            let (x, y, z) = p.transform(&posed.to_view).to_euclidean();
-            [x, y, z]
-        })
-        .collect();
-    // `project` on the transformed point, as `Scene::eval` does for every
-    // other shape: a camera-facing face is then bit-equal to a planar path.
-    let image: Vec<Option<Pt2>> = posed
-        .mesh
-        .vertices()
-        .iter()
-        .map(|p| projection.project(&p.transform(&posed.to_view)))
-        .collect::<Vec<_>>();
+    let vertices = posed.mesh.vertices();
+    let mut view = Vec::with_capacity(vertices.len());
+    let mut image = Vec::with_capacity(vertices.len());
+    for p in vertices {
+        // One transform serves view and image: `project` is
+        // `project_euclidean` of the moved point, so a camera-facing face
+        // is still bit-equal to the planar path `Scene::eval` projects.
+        let e = p.transform(&posed.to_view).to_euclidean();
+        view.push([e.0, e.1, e.2]);
+        image.push(projection.project_euclidean(e));
+    }
     let mut planes = Vec::with_capacity(posed.mesh.faces().len());
-    let mut faces = Vec::new();
+    let mut faces = Vec::with_capacity(posed.mesh.faces().len());
+    let mut pts: Vec<Pt2> = Vec::new();
     for (fi, face) in posed.mesh.faces().iter().enumerate() {
-        let v: Vec<V3> = face.indices.iter().map(|&k| view[k]).collect();
-        let n = face_normal(v[0], v[1], v[2]);
-        planes.push((n, v[0]));
-        let Some(pts) = face
-            .indices
-            .iter()
-            .map(|&k| image[k])
-            .collect::<Option<Vec<Pt2>>>()
-        else {
+        let at = |k: usize| view[face.indices[k]];
+        let n = face_normal(at(0), at(1), at(2));
+        planes.push(Plane::new(n, at(0), projection));
+        pts.clear();
+        let projects = face.indices.iter().all(|&k| match image[k] {
+            Some(p) => {
+                pts.push(p);
+                true
+            }
+            None => false,
+        });
+        if !projects {
             continue; // a vertex fails to project: culled whole (R-0002)
-        };
-        if !front_facing(n, v[0], projection) {
+        }
+        if !front_facing(n, at(0), projection) {
             continue;
         }
-        let depths = v.iter().map(|p| -p[2]);
+        let depths = face.indices.iter().map(|&k| -view[k][2]);
         let far = depths.clone().fold(f64::NEG_INFINITY, f64::max);
         let near = depths.fold(f64::INFINITY, f64::min);
         let outline = polygon(&pts);
@@ -202,9 +298,46 @@ fn front_facing(n: V3, p: V3, projection: Projection) -> bool {
     }
 }
 
+/// What each node's own vertices say about each of its own planes,
+/// worked out the first time a pair asks and kept for the frame
+/// (SPEC-0022 §2.2).
+struct OwnSides {
+    /// Where node `k`'s planes start in `sides`.
+    start: Vec<usize>,
+    sides: Vec<Option<Sides>>,
+}
+
+impl OwnSides {
+    fn new(nodes: &[Node]) -> OwnSides {
+        let mut start = Vec::with_capacity(nodes.len());
+        let mut total = 0;
+        for node in nodes {
+            start.push(total);
+            total += node.planes.len();
+        }
+        OwnSides {
+            start,
+            sides: vec![None; total],
+        }
+    }
+
+    /// The sides node `k`'s vertices keep to of its plane `p`.
+    fn get(&mut self, nodes: &[Node], k: usize, p: usize) -> Sides {
+        let slot = &mut self.sides[self.start[k] + p];
+        *slot.get_or_insert_with(|| {
+            let all = Sides {
+                neg: true,
+                pos: true,
+            };
+            Sides::of(&nodes[k].planes[p], &nodes[k].view, all)
+        })
+    }
+}
+
 /// The painter's order of `nodes`, as indices (SPEC-0018 §2.4).
-fn order(nodes: &[Node], projection: Projection) -> Vec<usize> {
+fn order(nodes: &[Node]) -> Vec<usize> {
     let n = nodes.len();
+    let mut own = OwnSides::new(nodes);
     // `before[a]` lists the nodes `a` must be drawn before.
     // with whether the order comes from an enclosure.
     let mut before: Vec<Vec<(usize, bool)>> = vec![Vec::new(); n];
@@ -215,7 +348,7 @@ fn order(nodes: &[Node], projection: Projection) -> Vec<usize> {
             if !overlap(&nodes[a], &nodes[b]) {
                 continue;
             }
-            let (a_first, enclosed) = draws_first(&nodes[a], &nodes[b], projection);
+            let (a_first, enclosed) = draws_first(nodes, a, b, &mut own);
             let (first, then) = if a_first { (a, b) } else { (b, a) };
             before[first].push((then, enclosed));
             pending[then] += 1;
@@ -265,23 +398,30 @@ fn overlap(a: &Node, b: &Node) -> bool {
     a.lo.x <= b.hi.x && b.lo.x <= a.hi.x && a.lo.y <= b.hi.y && b.lo.y <= a.hi.y
 }
 
-/// Whether `a` must be drawn before `b` (SPEC-0018 §2.4), and whether
-/// that order comes from an enclosure, which a cycle never breaks
+/// Whether node `a` must be drawn before node `b` (SPEC-0018 §2.4), and
+/// whether that order comes from an enclosure, which a cycle never breaks
 /// (SPEC-0021 §2.1).
-fn draws_first(a: &Node, b: &Node, projection: Projection) -> (bool, bool) {
-    let planes = a.planes.iter().chain(&b.planes);
-    for &(n, p0) in planes {
-        if let Some(a_first) = separated(n, p0, a, b, projection) {
+fn draws_first(nodes: &[Node], a: usize, b: usize, own: &mut OwnSides) -> (bool, bool) {
+    let (na, nb) = (&nodes[a], &nodes[b]);
+    // The face planes of `a`, then those of `b`: the first that separates
+    // decides, as it always has.
+    for (p, plane) in na.planes.iter().enumerate() {
+        if let Some(a_first) = separated(plane, || own.get(nodes, a, p), &nb.view, true) {
+            return (a_first, false);
+        }
+    }
+    for (p, plane) in nb.planes.iter().enumerate() {
+        if let Some(a_first) = separated(plane, || own.get(nodes, b, p), &na.view, false) {
             return (a_first, false);
         }
     }
     // No separating face plane. A part inside every face plane of the
     // other is enclosed by it (a bone in its muscle in its skin) and goes
     // first, however off-centre it sits (R-0021 AC1).
-    if inside(b, a) {
+    if inside(nb, na) {
         return (false, true);
     }
-    if inside(a, b) {
+    if inside(na, nb) {
         return (true, true);
     }
     // Interpenetrating, or separated only edge to edge, or an inverted
@@ -289,12 +429,12 @@ fn draws_first(a: &Node, b: &Node, projection: Projection) -> (bool, bool) {
     // goes on top. Not the nearest point: an inverted hull's far-side
     // bottom face reaches as near as the part it outlines, and would be
     // drawn over it (SPEC-0018 §2.4).
-    let a_first = b
+    let a_first = nb
         .mid
-        .total_cmp(&a.mid)
-        .then(b.near.total_cmp(&a.near))
-        .then(b.far.total_cmp(&a.far))
-        .then(a.index.cmp(&b.index))
+        .total_cmp(&na.mid)
+        .then(nb.near.total_cmp(&na.near))
+        .then(nb.far.total_cmp(&na.far))
+        .then(na.index.cmp(&nb.index))
         .is_lt();
     (a_first, false)
 }
@@ -304,52 +444,50 @@ fn draws_first(a: &Node, b: &Node, projection: Projection) -> (bool, bool) {
 /// `outer`'s half-spaces, so inside `outer` whatever its shape. An
 /// inverted hull's planes face inward, so nothing is ever inside one.
 fn inside(inner: &Node, outer: &Node) -> bool {
-    outer.planes.iter().all(|&(n, p0)| {
-        let len = dot(n, n).sqrt();
-        len.is_finite()
-            && len > 0.0
-            && inner
-                .view
-                .iter()
-                .all(|v| dot(n, [v[0] - p0[0], v[1] - p0[1], v[2] - p0[2]]) / len <= SEPARATION_TOL)
-    })
+    outer
+        .planes
+        .iter()
+        .all(|plane| plane.valid && inner.view.iter().all(|v| plane.side(v) <= SEPARATION_TOL))
 }
 
-/// If the plane `n · (x − p0) = 0` has `a` on one side and `b` on the
-/// other, whether `a` is drawn first (it is on the side away from the eye);
-/// `None` if the plane does not separate them or the eye lies on it.
-fn separated(n: V3, p0: V3, a: &Node, b: &Node, projection: Projection) -> Option<bool> {
-    let len = dot(n, n).sqrt();
-    if !(len.is_finite() && len > 0.0) {
+/// If `plane`, a face plane of one of two objects, has `a` on one side and
+/// `b` on the other, whether `a` is drawn first (it is on the side away
+/// from the eye); `None` if the plane does not separate them or the eye
+/// lies on it. `own` gives the sides the plane's object keeps to; `other`
+/// is the other object's vertices; `a_owns` says which object the plane
+/// is a face of.
+///
+/// The answer is the one the range test of R-0018 gave: `a` behind when
+/// all of `a` is on the negative side and all of `b` on the positive one,
+/// in front for the reverse. Only the reading is lazier.
+fn separated(
+    plane: &Plane,
+    own: impl FnOnce() -> Sides,
+    other: &[V3],
+    a_owns: bool,
+) -> Option<bool> {
+    let eye = plane.eye?;
+    let own = own();
+    if !(own.neg || own.pos) {
         return None;
     }
-    let side = |v: &V3| dot(n, [v[0] - p0[0], v[1] - p0[1], v[2] - p0[2]]) / len;
-    let range = |vs: &[V3]| {
-        vs.iter()
-            .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), v| {
-                let s = side(v);
-                (lo.min(s), hi.max(s))
-            })
+    // The other object must keep to the side opposite one the owner keeps
+    // to: only those sides are worth reading.
+    let want = Sides {
+        neg: own.pos,
+        pos: own.neg,
     };
-    let (a_lo, a_hi) = range(&a.view);
-    let (b_lo, b_hi) = range(&b.view);
-    let a_behind = if a_hi <= SEPARATION_TOL && b_lo >= -SEPARATION_TOL {
+    let other = Sides::of(plane, other, want);
+    let (a, b) = if a_owns { (own, other) } else { (other, own) };
+    let a_behind = if a.neg && b.pos {
         true // a on the negative side, b on the positive
-    } else if a_lo >= -SEPARATION_TOL && b_hi <= SEPARATION_TOL {
+    } else if a.pos && b.neg {
         false
     } else {
         return None;
     };
-    // The eye's side: positive means the eye sees the positive side.
-    let eye = match projection {
-        Projection::Orthographic => n[2],
-        Projection::Pinhole { .. } => side(&[0.0, 0.0, 0.0]),
-    };
-    if eye.abs() <= SEPARATION_TOL || eye.is_nan() {
-        return None;
-    }
     // The object on the eye's side is nearer and is drawn second.
-    Some((eye > 0.0) == a_behind)
+    Some(eye == a_behind)
 }
 
 #[cfg(test)]
