@@ -19,6 +19,7 @@
 //! [`Peel`], [`Material::mix`]).
 
 mod camera;
+mod coalesce;
 mod ease;
 mod faceted;
 mod finish;
@@ -32,15 +33,19 @@ mod peel;
 pub mod ppm;
 mod prim;
 mod record;
+mod sandwich;
 mod scene;
 pub mod shapes;
 pub mod sink;
 mod solid;
+#[cfg(test)]
+mod solid_reference;
 pub mod svg;
 mod track;
 mod xray;
 
 pub use camera::{Camera, Projection};
+pub use coalesce::coalesce;
 pub use ease::Ease;
 pub use faceted::{lambert, quantize, Faceted, FacetedError};
 pub use finish::{

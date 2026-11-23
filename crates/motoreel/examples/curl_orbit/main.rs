@@ -21,37 +21,11 @@ mod kit;
 mod orbit;
 mod palette;
 mod rig;
+mod scene;
 mod set;
 mod studio;
 mod timeline;
 
-use motoreel::Scene;
-
-use crate::studio::Framing;
-
-/// Close on the toy: 4.3 m back, 8° down.
-const FRAMING: Framing = Framing {
-    target: [0.02, 0.93, 0.0],
-    elevation: 8.0,
-    distance: 4.3,
-    focal: 2700.0,
-};
-
-/// The scene: platform, floor marks, figure. The floor marks are ordinary
-/// paths, so the platform and the figure are two depth groups.
-fn scene() -> Scene {
-    let mut scene = Scene::new(timeline::DURATION);
-    scene.view = set::VIEW;
-    for object in set::platform()
-        .into_iter()
-        .chain(set::floor_marks())
-        .chain(rig::figure())
-    {
-        scene.add(object);
-    }
-    scene
-}
-
 fn main() -> std::io::Result<()> {
-    orbit::run("curl_orbit", &scene(), &FRAMING)
+    orbit::run("curl_orbit", &scene::scene(), &scene::FRAMING)
 }

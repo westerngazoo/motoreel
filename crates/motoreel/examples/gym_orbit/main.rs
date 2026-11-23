@@ -25,6 +25,7 @@ mod palette;
 mod props;
 #[path = "../curl_orbit/rig.rs"]
 mod rig;
+mod scene;
 #[path = "../curl_orbit/set.rs"]
 mod set;
 #[path = "../curl_orbit/studio.rs"]
@@ -32,35 +33,6 @@ mod studio;
 #[path = "../curl_orbit/timeline.rs"]
 mod timeline;
 
-use motoreel::Scene;
-
-use crate::studio::Framing;
-
-/// Wide enough for the rack and the machine on either side of the toy.
-const FRAMING: Framing = Framing {
-    target: [-0.7, 1.05, 0.0],
-    elevation: 10.0,
-    distance: 10.5,
-    focal: 2500.0,
-};
-
-/// The platform and the props are one depth group, so the object order
-/// sorts them against each other; the floor marks end it, and the toy is
-/// the second group, never behind a prop by the layout.
-fn scene() -> Scene {
-    let mut scene = Scene::new(timeline::DURATION);
-    scene.view = set::VIEW;
-    for object in set::platform()
-        .into_iter()
-        .chain(props::gym())
-        .chain(set::floor_marks())
-        .chain(rig::figure())
-    {
-        scene.add(object);
-    }
-    scene
-}
-
 fn main() -> std::io::Result<()> {
-    orbit::run("gym_orbit", &scene(), &FRAMING)
+    orbit::run("gym_orbit", &scene::scene(), &scene::FRAMING)
 }
