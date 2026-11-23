@@ -20,6 +20,7 @@ Conventions the loader and the house look rely on:
 * Objects are named `NNx_name` so file order is build order.
 """
 
+import math
 import os
 import sys
 
@@ -61,6 +62,23 @@ def box(lo, hi):
             size = [h - l + 2 * grow for l, h in zip(lo, hi)]
             centre = [(l + h) / 2 for l, h in zip(lo, hi)]
             m = Matrix.Translation(centre) @ Matrix.Diagonal((*size, 1.0))
+            bmesh.ops.create_cube(bm, size=1.0, matrix=m)
+
+        return build
+
+    return shape
+
+
+def slab(centre, size, tilt):
+    """A box of `size` (x, y, z) about `centre`, turned `tilt` radians about
+    the x axis. Its two x faces keep one x each and its other four faces
+    each contain the x direction, so every quad stays planar after the
+    OBJ's six decimals: an extrusion along x of a turned rectangle."""
+
+    def shape(grow):
+        def build(bm):
+            s = [d + 2 * grow for d in size]
+            m = Matrix.Translation(centre) @ Matrix.Rotation(tilt, 4, "X") @ Matrix.Diagonal((*s, 1.0))
             bmesh.ops.create_cube(bm, size=1.0, matrix=m)
 
         return build
@@ -163,6 +181,48 @@ def flat_bench():
     return p
 
 
+def feet(p, y0, y1):
+    """A foot each side of a centre rail (x within 0.04 m), from `y0` to
+    `y1`: two halves, so no part crosses the rail."""
+    for x0, x1 in ((-0.24, -0.04), (0.04, 0.24)):
+        p.part("foot", "steel", box((x0, y0, 0.0), (x1, y1, 0.05)))
+
+
+def incline_bench():
+    """An incline curl bench facing -y: a seat pad at 0.37 m, a back pad
+    reclined 36.87 degrees from vertical (a 3-4-5 slope) behind it, a rail
+    on the floor along y with a foot at each end, the seat's post and a
+    strut under the back pad. Fits a seated lifter whose hip is 0.55 m up
+    over the origin and whose torso reclines with the pad."""
+    p = Prop("incline_bench")
+    p.part("seat", "pad", box((-0.17, -0.26, 0.29), (0.17, 0.10, 0.37)))
+    p.part("back", "pad", slab((0.0, 0.329, 0.692), (0.30, 0.07, 0.73), -math.atan2(3.0, 4.0)))
+    p.part("beam", "steel", box((-0.04, -0.22, 0.23), (0.04, 0.08, 0.29)))
+    p.part("post", "steel", box((-0.035, -0.09, 0.05), (0.035, -0.02, 0.23)))
+    p.part("rail", "steel", box((-0.04, -0.32, 0.0), (0.04, 0.62, 0.05)))
+    feet(p, -0.30, -0.22)
+    feet(p, 0.54, 0.62)
+    p.part("strut", "steel", box((-0.03, 0.40, 0.05), (0.03, 0.46, 0.68)))
+    return p
+
+
+def preacher_bench():
+    """A preacher curl bench facing -y: a high seat pad at 0.62 m (the
+    thighs slope down to the feet), and in front of it the arm pad, its top
+    sloping down at 45 degrees, on a strut from a front foot. Fits a seated
+    lifter whose hip is 0.80 m up over the origin, the upper arms on the
+    pad at 45 degrees from vertical."""
+    p = Prop("preacher_bench")
+    p.part("seat", "pad", box((-0.17, 0.0, 0.54), (0.17, 0.18, 0.62)))
+    p.part("post", "steel", box((-0.035, 0.05, 0.05), (0.035, 0.12, 0.54)))
+    p.part("rail", "steel", box((-0.04, -0.78, 0.0), (0.04, 0.40, 0.05)))
+    feet(p, 0.32, 0.40)
+    feet(p, -0.78, -0.62)
+    p.part("strut", "steel", slab((0.0, -0.49, 0.4075), (0.05, 0.05, 0.7834), -math.atan2(0.4851, 0.8744)))
+    p.part("arm_pad", "pad", slab((0.0, -0.257, 0.887), (0.72, 0.07, 0.23), 0.75 * math.pi))
+    return p
+
+
 def dumbbell():
     """A hex dumbbell along x, its origin at the handle's centre."""
     p = Prop("dumbbell")
@@ -192,7 +252,8 @@ def barbell():
 
 def main():
     out_dir = sys.argv[sys.argv.index("--") + 1] if "--" in sys.argv else "assets/props"
-    for build in (power_rack, cable_machine, flat_bench, dumbbell, barbell):
+    builds = (power_rack, cable_machine, flat_bench, dumbbell, barbell, incline_bench, preacher_bench)
+    for build in builds:
         build().export(out_dir)
 
 
