@@ -45,3 +45,4 @@ field. The build order across requirements and specs is in
 | [SPEC-0016](0016-gradient-fills.md) | Gradient fills: frame, sRGB stops, Bayer dither, SVG gradients | R-0016 | Accepted — implemented, in review |
 | [SPEC-0020](0020-load-models.md) | Loading models from OBJ: parse, split faces, bind materials, Blender axes | R-0020 | Accepted — implemented, in review |
 | [SPEC-0021](0021-layers.md) | Layers and the peel: enclosure order, `Peel`, `Material::mix`, the anatomy assets | R-0021 | Accepted — implemented, in review |
+| [SPEC-0022](0022-depth-order-performance.md) | Depth-order performance: lazy sides, the exact sandwich, the oracle and differential test, the bench, `coalesce` | R-0022 | Accepted — implemented, in review |
