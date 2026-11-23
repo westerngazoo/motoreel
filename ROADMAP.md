@@ -63,6 +63,7 @@ M3 glyph work.
 | R-0018 | Faceted 3D: low-poly meshes posed by `Motor3`, back-face cull, deterministic painter's sort, faces painted by an R-0017 finish through the existing 2D pipeline | SPEC-0018 | **In progress**: accepted 2026-11-22, implemented (object-level painter's order), PR open |
 | R-0019 | The x-ray finish («Rayos X») and its sweep («barrido»): tinted glass skin, inner parts opaque in a glow that does not stack, a moving screen line between two finishes | SPEC-0019 | **In progress**: accepted 2026-11-22, implemented, PR open |
 | R-0020 | Loading models («cargar modelos»): OBJ geometry, one mesh per object, valid faces kept and the rest ear-clipped, materials bound by name with `skin`/`inner` tags, Blender's z-up frame mapped; the Blender props pipeline (`tools/blender/`, `assets/props/`) | SPEC-0020 | **In progress**: accepted 2026-11-22, implemented, PR open |
+| R-0021 | Layers and the peel («capas»): an enclosure rule in the object order (a cycle never draws a shell before its inside), `Peel` (facets lift along their normals and fade, staggered and eased), `Material::mix`, and the in-house toy anatomy (`tools/blender/anatomy.py`, `assets/anatomy/`) on one rig | SPEC-0021 | **In progress**: accepted 2026-11-22, implemented, PR open |
 
 **Why the renumber.** The M3/M4 requirements below shift up by two; the
 GA glyphs and incidence shapes keep their content and lose their old ids.
