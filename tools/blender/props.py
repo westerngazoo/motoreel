@@ -24,8 +24,10 @@ import os
 import sys
 
 import bmesh
-import bpy
 from mathutils import Matrix
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import house  # noqa: E402  (after the path: Blender leaves the script's folder off it)
 
 INK = 0.01  # ink hull offset, metres (about 3 px at the example's framing)
 SIDES = 8  # facets around a tube
@@ -37,45 +39,18 @@ class Prop:
     def __init__(self, name):
         self.name = name
         self.count = 0
-        bpy.ops.wm.read_factory_settings(use_empty=True)
-
-    def _object(self, name, material, build, reverse):
-        mesh = bpy.data.meshes.new(name)
-        bm = bmesh.new()
-        build(bm)
-        if reverse:
-            bmesh.ops.reverse_faces(bm, faces=bm.faces)
-        bm.to_mesh(mesh)
-        bm.free()
-        mat = bpy.data.materials.get(material) or bpy.data.materials.new(material)
-        mesh.materials.append(mat)
-        obj = bpy.data.objects.new(name, mesh)
-        bpy.context.scene.collection.objects.link(obj)
+        house.reset()
 
     def part(self, name, material, shape, ink="ink"):
         """`shape(grow)` adds the part to a bmesh with every size grown by
         `grow`; `ink` is the hull's material, or None for no outline."""
         if ink is not None:
-            self._object(f"{self.count:02d}a_{name}_ink", ink, shape(INK), True)
-        self._object(f"{self.count:02d}b_{name}", material, shape(0.0), False)
+            house.add_object(f"{self.count:02d}a_{name}_ink", [ink], shape(INK), reverse=True)
+        house.add_object(f"{self.count:02d}b_{name}", [material], shape(0.0))
         self.count += 1
 
     def export(self, out_dir):
-        path = os.path.join(out_dir, f"{self.name}.obj")
-        bpy.ops.wm.obj_export(
-            filepath=path,
-            export_materials=True,  # writes `usemtl`; the .mtl is removed below
-            export_normals=False,
-            export_uv=False,
-            export_triangulated_mesh=False,
-            forward_axis="Y",
-            up_axis="Z",
-        )
-        os.remove(os.path.join(out_dir, f"{self.name}.mtl"))
-        with open(path) as f:
-            lines = [l for l in f if not l.startswith("mtllib ")]
-        with open(path, "w") as f:
-            f.writelines(lines)
+        house.export(out_dir, self.name)
 
 
 def box(lo, hi):
@@ -217,7 +192,6 @@ def barbell():
 
 def main():
     out_dir = sys.argv[sys.argv.index("--") + 1] if "--" in sys.argv else "assets/props"
-    os.makedirs(out_dir, exist_ok=True)
     for build in (power_rack, cable_machine, flat_bench, dumbbell, barbell):
         build().export(out_dir)
 

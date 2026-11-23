@@ -18,6 +18,8 @@
 mod encode;
 #[path = "../curl_orbit/kit.rs"]
 mod kit;
+#[path = "../curl_orbit/orbit.rs"]
+mod orbit;
 #[path = "../curl_orbit/palette.rs"]
 mod palette;
 mod props;
@@ -60,5 +62,5 @@ fn scene() -> Scene {
 }
 
 fn main() -> std::io::Result<()> {
-    studio::run("gym_orbit", &scene(), &FRAMING)
+    orbit::run("gym_orbit", &scene(), &FRAMING)
 }

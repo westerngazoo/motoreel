@@ -44,3 +44,4 @@ field. The build order across requirements and specs is in
 | [SPEC-0012](0012-paths-and-fills.md) | Paths and fills: cubic paths, nonzero fills, shape generators | R-0012 | Accepted |
 | [SPEC-0016](0016-gradient-fills.md) | Gradient fills: frame, sRGB stops, Bayer dither, SVG gradients | R-0016 | Accepted — implemented, in review |
 | [SPEC-0020](0020-load-models.md) | Loading models from OBJ: parse, split faces, bind materials, Blender axes | R-0020 | Accepted — implemented, in review |
+| [SPEC-0021](0021-layers.md) | Layers and the peel: enclosure order, `Peel`, `Material::mix`, the anatomy assets | R-0021 | Accepted — implemented, in review |

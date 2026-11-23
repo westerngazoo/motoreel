@@ -163,6 +163,38 @@ impl Material {
     pub fn layer(&self) -> Layer {
         self.layer
     }
+
+    /// This material blended toward `other` by `t` (R-0021 AC3): each tone
+    /// `(1 − t)·a + t·b` per channel, rounded to the nearest integer, and
+    /// the opacity alike, so both ends are exact. `t` is clamped to
+    /// `[0, 1]` (NaN is 0). The ramp keeps this material's length; a
+    /// shorter `other` lends its last tone. The seam and the layer are
+    /// this material's.
+    #[must_use]
+    pub fn mix(&self, other: &Material, t: f64) -> Material {
+        let t = if t > 0.0 { t.min(1.0) } else { 0.0 };
+        let blend = |a: f64, b: f64| (1.0 - t) * a + t * b;
+        let channel = |a: u8, b: u8| blend(f64::from(a), f64::from(b)).round() as u8;
+        let theirs = other.tones();
+        let mut tones = self.tones;
+        for i in 0..MAX_TONES {
+            // Unused slots repeat the last tone (the `PartialEq` invariant).
+            let (a, b) = (
+                self.tones[i.min(self.len - 1)],
+                theirs[i.min(self.len - 1).min(theirs.len() - 1)],
+            );
+            tones[i] = Rgb {
+                r: channel(a.r, b.r),
+                g: channel(a.g, b.g),
+                b: channel(a.b, b.b),
+            };
+        }
+        Material {
+            tones,
+            opacity: blend(self.opacity, other.opacity).clamp(0.0, 1.0),
+            ..*self
+        }
+    }
 }
 
 /// How a surface is turned to the light (R-0017 AC1).

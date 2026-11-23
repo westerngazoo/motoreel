@@ -1,0 +1,17 @@
+segment	parent	x	y	z
+pelvis	-	0.0	0.97	0.0
+torso	pelvis	0.0	0.99	0.0
+neck	torso	0.0	1.4	0.0
+head	neck	0.01	1.55	0.0
+upper_arm_r	torso	0.0	1.37	0.245
+forearm_r	upper_arm_r	-0.01	1.08	0.29
+hand_r	forearm_r	-0.01	0.78	0.31
+thigh_r	pelvis	0.0	0.92	0.105
+shin_r	thigh_r	0.01	0.5	0.115
+foot_r	shin_r	0.0	0.09	0.115
+upper_arm_l	torso	0.0	1.37	-0.245
+forearm_l	upper_arm_l	-0.01	1.08	-0.29
+hand_l	forearm_l	-0.01	0.78	-0.31
+thigh_l	pelvis	0.0	0.92	-0.105
+shin_l	thigh_l	0.01	0.5	-0.115
+foot_l	shin_l	0.0	0.09	-0.115
