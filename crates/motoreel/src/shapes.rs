@@ -177,19 +177,31 @@ pub fn polygon(pts: &[Pt2]) -> Vec<Subpath<Pt2>> {
     if !pts.iter().all(|&p| finite(p)) {
         return Vec::new();
     }
-    let mut corners = pts.to_vec();
-    corners.dedup();
-    if corners.len() > 1 && corners.first() == corners.last() {
-        corners.pop();
+    // `Vec::dedup` without the copy (R-0022: this runs once per visible
+    // face per frame): a corner is kept when it differs from the one
+    // before it, which for finite points is the corner `dedup` keeps.
+    let kept = |i: &usize| *i == 0 || pts[*i - 1] != pts[*i];
+    let mut corners = (0..pts.len()).filter(kept).count();
+    // The last kept corner equals the last point, so this is `dedup`'s
+    // "the last repeats the first".
+    if corners > 1 && pts.first() == pts.last() {
+        corners -= 1;
     }
-    if corners.len() < 3 {
+    if corners < 3 {
         return Vec::new();
     }
-    let mut sub = Subpath::new(corners[0]);
-    for &p in &corners[1..] {
-        sub = sub.line_to(p);
-    }
-    vec![sub.close()]
+    let mut segs = Vec::with_capacity(corners - 1);
+    segs.extend(
+        (1..pts.len())
+            .filter(kept)
+            .take(corners - 1)
+            .map(|i| Seg::Line(pts[i])),
+    );
+    vec![Subpath {
+        start: pts[0],
+        segs,
+        closed: true,
+    }]
 }
 
 /// `c` offset by `(dx, dy)`.

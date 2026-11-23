@@ -429,11 +429,15 @@ pub trait Finish: Send + Sync {
     fn paint(&self, batch: &[Surface], light: &Light, ctx: &FrameCtx) -> Vec<Prim2>;
 }
 
-/// Every point of `s`, handles included.
+/// Every point of `s`, handles included. No allocation per segment: a
+/// surface is validated once per face per frame (R-0022).
 fn points(s: &Subpath<Pt2>) -> impl Iterator<Item = Pt2> + '_ {
-    std::iter::once(s.start).chain(s.segs.iter().flat_map(|seg| match *seg {
-        Seg::Line(p) => vec![p],
-        Seg::Cubic(a, b, p) => vec![a, b, p],
+    std::iter::once(s.start).chain(s.segs.iter().flat_map(|seg| {
+        let (pts, len) = match *seg {
+            Seg::Line(p) => ([p, p, p], 1),
+            Seg::Cubic(a, b, p) => ([a, b, p], 3),
+        };
+        pts.into_iter().take(len)
     }))
 }
 
