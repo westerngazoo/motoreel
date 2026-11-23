@@ -18,6 +18,7 @@
 
 mod encode;
 mod kit;
+mod orbit;
 mod palette;
 mod rig;
 mod set;
@@ -52,5 +53,5 @@ fn scene() -> Scene {
 }
 
 fn main() -> std::io::Result<()> {
-    studio::run("curl_orbit", &scene(), &FRAMING)
+    orbit::run("curl_orbit", &scene(), &FRAMING)
 }
