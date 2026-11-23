@@ -42,3 +42,4 @@ the requirement(s) it satisfies. The mapping is maintained in
 | [R-0017](0017-interchangeable-finish.md) | Interchangeable finish («acabado»): surfaces + a finish trait; `Facetas` byte-identical to today's low poly | MC | Accepted (In progress: implemented, PR open) |
 | [R-0018](0018-faceted-3d.md) | Faceted 3D: motor-posed low-poly meshes, back-face cull, painter's sort, painted by an R-0017 finish | MC | Accepted (In progress: implemented, PR open) |
 | [R-0019](0019-x-ray.md) | The x-ray finish and its sweep: tinted glass skin, inner parts in a non-stacking glow, a screen-line sweep between two finishes | MC | Accepted (In progress: implemented, PR open) |
+| [R-0020](0020-load-models.md) | Loading models: low-poly meshes from OBJ, one mesh per object, materials and x-ray layers by name, Blender's frame mapped | MC | Accepted (In progress: implemented, PR open) |
