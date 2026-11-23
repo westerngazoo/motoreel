@@ -19,6 +19,7 @@
 //! [`Peel`], [`Material::mix`]).
 
 mod camera;
+mod coalesce;
 mod ease;
 mod faceted;
 mod finish;
@@ -44,6 +45,7 @@ mod track;
 mod xray;
 
 pub use camera::{Camera, Projection};
+pub use coalesce::coalesce;
 pub use ease::Ease;
 pub use faceted::{lambert, quantize, Faceted, FacetedError};
 pub use finish::{
