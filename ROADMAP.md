@@ -62,6 +62,7 @@ M3 glyph work.
 | R-0017 | Interchangeable finish («acabado»): a surface (outline, normal, depth, stable id, material) and a finish trait over a batch; `Facetas` reproduces rf-marca's low poly byte for byte. `Pintura`, `Cel`, `RayosX` get their own requirements (guion-video-creator ADR-0006) | SPEC-0017 | **In progress**: accepted 2026-11-22 («dale con el 3D»), implemented, PR open |
 | R-0018 | Faceted 3D: low-poly meshes posed by `Motor3`, back-face cull, deterministic painter's sort, faces painted by an R-0017 finish through the existing 2D pipeline | SPEC-0018 | **In progress**: accepted 2026-11-22, implemented (object-level painter's order), PR open |
 | R-0019 | The x-ray finish («Rayos X») and its sweep («barrido»): tinted glass skin, inner parts opaque in a glow that does not stack, a moving screen line between two finishes | SPEC-0019 | **In progress**: accepted 2026-11-22, implemented, PR open |
+| R-0020 | Loading models («cargar modelos»): OBJ geometry, one mesh per object, valid faces kept and the rest ear-clipped, materials bound by name with `skin`/`inner` tags, Blender's z-up frame mapped; the Blender props pipeline (`tools/blender/`, `assets/props/`) | SPEC-0020 | **In progress**: accepted 2026-11-22, implemented, PR open |
 
 **Why the renumber.** The M3/M4 requirements below shift up by two; the
 GA glyphs and incidence shapes keep their content and lose their old ids.
