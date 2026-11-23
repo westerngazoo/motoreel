@@ -15,7 +15,8 @@
 //! [`Paint`]), R-0017 (interchangeable finishes: [`Surface`], [`Finish`],
 //! [`Faceted`]), R-0018 (faceted 3D: [`Mesh`], [`Scene::eval_with`]) and
 //! R-0019 (the x-ray finish and its sweep: [`XRay`], [`Sweep`]) and R-0020
-//! (meshes loaded from OBJ: [`Obj`]).
+//! (meshes loaded from OBJ: [`Obj`]) and R-0021 (layers and the peel:
+//! [`Peel`], [`Material::mix`]).
 
 mod camera;
 mod ease;
@@ -27,6 +28,7 @@ mod mesh;
 pub mod obj;
 mod object;
 pub mod path;
+mod peel;
 pub mod ppm;
 mod prim;
 mod record;
@@ -51,6 +53,7 @@ pub use mesh::{Mesh, MeshError, MeshFace, PLANAR_TOL};
 pub use obj::{Axes, Obj, ObjError, ObjErrorKind};
 pub use object::{Object, Shape};
 pub use path::{Seg, Subpath};
+pub use peel::{Peel, PeelError};
 pub use ppm::PpmSink;
 pub use prim::{Align, Fill, Paint, Prim2, Pt2, Rgb, Style};
 pub use record::{record, RecordError};

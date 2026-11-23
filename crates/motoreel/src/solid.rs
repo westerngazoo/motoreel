@@ -206,39 +206,46 @@ fn front_facing(n: V3, p: V3, projection: Projection) -> bool {
 fn order(nodes: &[Node], projection: Projection) -> Vec<usize> {
     let n = nodes.len();
     // `before[a]` lists the nodes `a` must be drawn before.
-    let mut before: Vec<Vec<usize>> = vec![Vec::new(); n];
+    // with whether the order comes from an enclosure.
+    let mut before: Vec<Vec<(usize, bool)>> = vec![Vec::new(); n];
     let mut pending = vec![0_usize; n];
+    let mut pending_enclosed = vec![0_usize; n];
     for a in 0..n {
         for b in a + 1..n {
             if !overlap(&nodes[a], &nodes[b]) {
                 continue;
             }
-            let (first, then) = if draws_first(&nodes[a], &nodes[b], projection) {
-                (a, b)
-            } else {
-                (b, a)
-            };
-            before[first].push(then);
+            let (a_first, enclosed) = draws_first(&nodes[a], &nodes[b], projection);
+            let (first, then) = if a_first { (a, b) } else { (b, a) };
+            before[first].push((then, enclosed));
             pending[then] += 1;
+            pending_enclosed[then] += usize::from(enclosed);
         }
     }
     let mut done = vec![false; n];
     let mut out = Vec::with_capacity(n);
     while out.len() < n {
-        // Among the nodes nothing waits on, the farthest; if a cycle leaves
-        // none, the farthest of all that remain (its constraints dropped).
-        let pick = |free: bool| {
+        // Among the nodes nothing waits on, the farthest. If a cycle leaves
+        // none, the farthest of those not waiting on a part they enclose,
+        // so a cycle never draws a shell before its inside (R-0021 AC1);
+        // failing that, the farthest of all. A pick drops its pending
+        // constraints.
+        let farthest = |keep: &dyn Fn(usize) -> bool| {
             (0..n)
-                .filter(|&k| !done[k] && (!free || pending[k] == 0))
+                .filter(|&k| !done[k] && keep(k))
                 .min_by(|&x, &y| farther_first(&nodes[x], &nodes[y]))
         };
-        let Some(k) = pick(true).or_else(|| pick(false)) else {
+        let Some(k) = farthest(&|k| pending[k] == 0)
+            .or_else(|| farthest(&|k| pending_enclosed[k] == 0))
+            .or_else(|| farthest(&|_| true))
+        else {
             break;
         };
         done[k] = true;
         out.push(k);
-        for &m in &before[k] {
+        for &(m, enclosed) in &before[k] {
             pending[m] = pending[m].saturating_sub(1);
+            pending_enclosed[m] = pending_enclosed[m].saturating_sub(usize::from(enclosed));
         }
     }
     out
@@ -258,25 +265,54 @@ fn overlap(a: &Node, b: &Node) -> bool {
     a.lo.x <= b.hi.x && b.lo.x <= a.hi.x && a.lo.y <= b.hi.y && b.lo.y <= a.hi.y
 }
 
-/// Whether `a` must be drawn before `b` (SPEC-0018 §2.4).
-fn draws_first(a: &Node, b: &Node, projection: Projection) -> bool {
+/// Whether `a` must be drawn before `b` (SPEC-0018 §2.4), and whether
+/// that order comes from an enclosure, which a cycle never breaks
+/// (SPEC-0021 §2.1).
+fn draws_first(a: &Node, b: &Node, projection: Projection) -> (bool, bool) {
     let planes = a.planes.iter().chain(&b.planes);
     for &(n, p0) in planes {
         if let Some(a_first) = separated(n, p0, a, b, projection) {
-            return a_first;
+            return (a_first, false);
         }
     }
-    // No separating face plane: interpenetrating, enclosed, or separated
-    // only edge to edge. The one whose visible faces lie nearer on average
+    // No separating face plane. A part inside every face plane of the
+    // other is enclosed by it (a bone in its muscle in its skin) and goes
+    // first, however off-centre it sits (R-0021 AC1).
+    if inside(b, a) {
+        return (false, true);
+    }
+    if inside(a, b) {
+        return (true, true);
+    }
+    // Interpenetrating, or separated only edge to edge, or an inverted
+    // hull around its part. The one whose visible faces lie nearer on average
     // goes on top. Not the nearest point: an inverted hull's far-side
     // bottom face reaches as near as the part it outlines, and would be
     // drawn over it (SPEC-0018 §2.4).
-    b.mid
+    let a_first = b
+        .mid
         .total_cmp(&a.mid)
         .then(b.near.total_cmp(&a.near))
         .then(b.far.total_cmp(&a.far))
         .then(a.index.cmp(&b.index))
-        .is_lt()
+        .is_lt();
+    (a_first, false)
+}
+
+/// Whether every vertex of `inner` lies on the inner side of every face
+/// plane of `outer` (within [`SEPARATION_TOL`]): inside the intersection of
+/// `outer`'s half-spaces, so inside `outer` whatever its shape. An
+/// inverted hull's planes face inward, so nothing is ever inside one.
+fn inside(inner: &Node, outer: &Node) -> bool {
+    outer.planes.iter().all(|&(n, p0)| {
+        let len = dot(n, n).sqrt();
+        len.is_finite()
+            && len > 0.0
+            && inner
+                .view
+                .iter()
+                .all(|v| dot(n, [v[0] - p0[0], v[1] - p0[1], v[2] - p0[2]]) / len <= SEPARATION_TOL)
+    })
 }
 
 /// If the plane `n · (x − p0) = 0` has `a` on one side and `b` on the
