@@ -41,6 +41,7 @@ use crate::camera::Projection;
 use crate::finish::{Facing, Surface};
 use crate::mesh::{dot, face_normal, Mesh, V3};
 use crate::prim::Pt2;
+use crate::sandwich::Sandwich;
 use crate::shapes::polygon;
 
 /// A separating plane may pass this close (view units) to a vertex of the
@@ -184,13 +185,15 @@ pub(crate) fn surfaces(group: &[Posed], projection: Projection) -> Vec<Surface> 
 /// One object's visible faces, sorted far to near; `None` if none survive.
 fn node(posed: &Posed, projection: Projection) -> Option<Node> {
     let vertices = posed.mesh.vertices();
+    let to_view = Sandwich::new(&posed.to_view);
     let mut view = Vec::with_capacity(vertices.len());
     let mut image = Vec::with_capacity(vertices.len());
     for p in vertices {
-        // One transform serves view and image: `project` is
-        // `project_euclidean` of the moved point, so a camera-facing face
-        // is still bit-equal to the planar path `Scene::eval` projects.
-        let e = p.transform(&posed.to_view).to_euclidean();
+        // One sandwich serves view and image: `project` is
+        // `project_euclidean` of the moved point, and `Sandwich` is
+        // `transform` bit for bit, so a camera-facing face is still
+        // bit-equal to the planar path `Scene::eval` projects.
+        let e = to_view.apply(p);
         view.push([e.0, e.1, e.2]);
         image.push(projection.project_euclidean(e));
     }

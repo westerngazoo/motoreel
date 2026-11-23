@@ -32,6 +32,7 @@ mod peel;
 pub mod ppm;
 mod prim;
 mod record;
+mod sandwich;
 mod scene;
 pub mod shapes;
 pub mod sink;
