@@ -26,3 +26,13 @@ motoreel-typeset = { path = "../motoreel-typeset", optional = true }
 # Property-based acceptance tests (R-0001); dev-only, so the normal
 # dependency graph stays garust-only. Same major as the garust workspace.
 proptest = "1"
+
+# R-0022's frame-time benches: std `Instant` and medians, no harness crate
+# (SPEC-0022 §2.6). `cargo bench -p motoreel`.
+[[bench]]
+name = "orbit"
+harness = false
+
+[[bench]]
+name = "anatomy"
+harness = false
