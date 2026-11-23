@@ -198,7 +198,12 @@ impl Mesh {
 }
 
 /// Validate face `i` against the vertex positions and the material count.
-fn check_face(i: usize, face: &MeshFace, points: &[V3], materials: usize) -> Result<(), MeshError> {
+pub(crate) fn check_face(
+    i: usize,
+    face: &MeshFace,
+    points: &[V3],
+    materials: usize,
+) -> Result<(), MeshError> {
     let idx = &face.indices;
     if idx.len() < 3 {
         return Err(MeshError::TooFewIndices(i));

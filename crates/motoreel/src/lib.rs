@@ -14,7 +14,8 @@
 //! [`shapes`], [`Fill`]), R-0016 (gradient fills: [`gradient`],
 //! [`Paint`]), R-0017 (interchangeable finishes: [`Surface`], [`Finish`],
 //! [`Faceted`]), R-0018 (faceted 3D: [`Mesh`], [`Scene::eval_with`]) and
-//! R-0019 (the x-ray finish and its sweep: [`XRay`], [`Sweep`]).
+//! R-0019 (the x-ray finish and its sweep: [`XRay`], [`Sweep`]) and R-0020
+//! (meshes loaded from OBJ: [`Obj`]).
 
 mod camera;
 mod ease;
@@ -23,6 +24,7 @@ mod finish;
 pub mod gradient;
 pub mod label;
 mod mesh;
+pub mod obj;
 mod object;
 pub mod path;
 pub mod ppm;
@@ -46,6 +48,7 @@ pub use finish::{
 pub use gradient::{Gradient, GradientError, GradientKind, Stop};
 pub use label::{Anchor, Label, ScreenAnchor};
 pub use mesh::{Mesh, MeshError, MeshFace, PLANAR_TOL};
+pub use obj::{Axes, Obj, ObjError, ObjErrorKind};
 pub use object::{Object, Shape};
 pub use path::{Seg, Subpath};
 pub use ppm::PpmSink;
