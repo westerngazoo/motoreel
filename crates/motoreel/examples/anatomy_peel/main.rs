@@ -25,66 +25,16 @@ mod kit;
 #[allow(dead_code)]
 #[path = "../curl_orbit/palette.rs"]
 mod palette;
+mod scene;
 #[path = "../curl_orbit/set.rs"]
 mod set;
 #[path = "../curl_orbit/studio.rs"]
 mod studio;
 mod timeline;
 
-use motoreel::{Finish, Look, Prim2, Pt2, Scene, Sweep};
-
-use crate::body::Body;
-use crate::palette::CIAN;
-use crate::studio::Framing;
-
-/// On the toy, a little wider than the curl's close-up.
-const FRAMING: Framing = Framing {
-    target: [0.02, 0.95, 0.0],
-    elevation: 8.0,
-    distance: 4.6,
-    focal: 2700.0,
-};
-
-/// Every primitive at `t`.
-fn frame(body: &Body, t: f64) -> Vec<Prim2> {
-    let s = timeline::at(t);
-    let mut scene = Scene::new(timeline::DURATION);
-    scene.view = set::VIEW;
-    scene.camera = studio::camera(&FRAMING, s.azimuth);
-    for object in set::platform()
-        .into_iter()
-        .chain(set::floor_marks())
-        .chain(body.objects(&s.moment))
-        .chain(body.lever(t, s.moment.lever))
-    {
-        scene.add(object);
-    }
-    let (facetas, rayos) = (studio::faceted(), studio::xray());
-    let sweep;
-    let finish: &dyn Finish = match s.look {
-        timeline::Look::Faceted => &facetas,
-        timeline::Look::XRay => &rayos,
-        timeline::Look::Sweep(x) => {
-            sweep = Sweep::new(&rayos, &facetas, Pt2 { x, y: 0.0 }, Pt2 { x: 1.0, y: 0.0 })
-                .unwrap_or_else(|e| panic!("valid: {e}"));
-            &sweep
-        }
-    };
-    let look = Look {
-        finish,
-        light: studio::light(&scene.camera),
-        seed: 0,
-    };
-    let mut out = set::backdrop(&scene.camera);
-    out.extend(scene.eval_with(t, &look));
-    if let timeline::Look::Sweep(x) = s.look {
-        out.extend(set::bar(x, 26.0, CIAN, 0.18));
-        out.extend(set::bar(x, 5.0, CIAN, 1.0));
-    }
-    out
-}
-
 fn main() -> std::io::Result<()> {
-    let body = Body::load();
-    studio::run("anatomy_peel", timeline::DURATION, |t| frame(&body, t))
+    let body = body::Body::load();
+    studio::run("anatomy_peel", timeline::DURATION, |t| {
+        scene::frame(&body, t)
+    })
 }

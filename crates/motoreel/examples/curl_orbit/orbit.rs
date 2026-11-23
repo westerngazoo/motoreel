@@ -1,6 +1,7 @@
 //! One frame of the curl orbit's timeline (`timeline.rs`) for any scene:
 //! the orbit camera, the sweep between the two looks, the sweep bar and
-//! the freeze flash. `curl_orbit` and `gym_orbit` share it.
+//! the freeze flash. `curl_orbit` and `gym_orbit` share it, and
+//! `benches/orbit.rs` times it (R-0022).
 
 use motoreel::{Finish, Look, Prim2, Pt2, Scene, Sweep};
 
@@ -10,7 +11,7 @@ use crate::studio::{self, Framing};
 use crate::timeline::{self, Xray};
 
 /// Every primitive of `scene` at `t`, seen from the timeline's azimuth.
-fn frame(base: &Scene, framing: &Framing, t: f64) -> Vec<Prim2> {
+pub fn frame(base: &Scene, framing: &Framing, t: f64) -> Vec<Prim2> {
     let s = timeline::at(t);
     let mut scene = base.clone();
     scene.camera = studio::camera(framing, s.azimuth);
