@@ -97,6 +97,8 @@ fn the_props() -> Vec<(&'static str, String)> {
         "flat_bench",
         "dumbbell",
         "barbell",
+        "incline_bench",
+        "preacher_bench",
     ]
     .into_iter()
     .map(|name| {

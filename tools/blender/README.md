@@ -35,6 +35,8 @@ no randomness, factory settings). CI does not run Blender; the tests in
 | `flat_bench.obj` | 6 + 6 hulls | 72 | 144 |
 | `dumbbell.obj` | 3 + 3 hulls | 52 | 136 |
 | `barbell.obj` | 11 + 11 hulls | 252 | 744 |
+| `incline_bench.obj` | 10 + 10 hulls | 120 | 240 |
+| `preacher_bench.obj` | 9 + 9 hulls | 108 | 216 |
 
 ## The anatomy (R-0021)
 
