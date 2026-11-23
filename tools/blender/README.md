@@ -36,6 +36,31 @@ no randomness, factory settings). CI does not run Blender; the tests in
 | `dumbbell.obj` | 3 + 3 hulls | 52 | 136 |
 | `barbell.obj` | 11 + 11 hulls | 252 | 744 |
 
+## The anatomy (R-0021)
+
+```bash
+/Applications/Blender.app/Contents/MacOS/Blender -b --factory-startup \
+    --python tools/blender/anatomy.py -- assets/anatomy
+```
+
+Three layers of the curl example's toy, one OBJ each, plus the rig:
+
+| File | Objects | Faces | Triangles (with hulls) | Materials |
+|------|---------|-------|------------------------|-----------|
+| `skin.obj` | 40 (23 parts + 17 hulls) | 2 020 | 3 416 | `skin_blue`, `skin_shorts`, `skin_shoe`, `skin_band`, `skin_eye`, `skin_pupil`, `skin_ink` |
+| `muscle.obj` | 32 | 1 220 | 1 972 | `muscle_<group>` per named group, `muscle_other` |
+| `bone.obj` | 34 | 514 | 844 | `inner_bone`, `inner_forearm` (radius and ulna) |
+| `joints.tsv` | 16 segments | | | `segment, parent, x, y, z` in motoreel's frame |
+
+Objects are named `segment.part`. A reel poses a segment with one motor
+about its joint, and every layer of that segment follows. Every muscle
+and bone lies inside a skin part of its own segment, which the depth sort
+relies on (tested in `tests/r0021_layers.rs`). Shapes are a port of the
+curl example's kit, so the skin matches its toy part for part.
+
+`house.py` holds what both scripts share (an empty scene, an object from
+a bmesh builder, the export).
+
 ## Third-party models
 
 Only CC0, with an entry in `assets/LICENSES.md` (source URL, author, date).
